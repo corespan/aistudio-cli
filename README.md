@@ -1,6 +1,6 @@
 # ai-studio-cli
 
-A command-line tool for node provisioning and GPU bandwidth benchmarking via `nvbandwidth`.
+A command-line tool for node provisioning (CUDA toolkit, Nvidia recommended drivers, libraries) and GPU bandwidth benchmarking via `nvbandwidth`. See https://github.com/NVIDIA/nvbandwidth.
 
 ## Building from Source
 
