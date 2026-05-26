@@ -2,6 +2,8 @@
 
 A command-line tool for node provisioning (CUDA toolkit, Nvidia recommended drivers, libraries) and GPU bandwidth benchmarking via `nvbandwidth`. See https://github.com/NVIDIA/nvbandwidth.
 
+Supports all major NVIDIA GPU architectures including the **CoreSpan 5090 Inference System** (Blackwell / RTX 5090, GB202). The provisioning script automatically detects the RTX 5090, selects CUDA 12.8, and installs driver 570+.
+
 ## Building from Source
 
 ```bash
@@ -69,6 +71,28 @@ ai-studio-cli nvbandwidth test host_to_device_memcpy_sm
 | `--json` | `-j` | | Output results as JSON |
 | `--skip-verify` | `-s` | | Skip data verification after copy |
 | `--use-mean` | `-m` | | Use arithmetic mean instead of median |
+
+---
+
+## NVLink Benchmarking (CoreSpan 5090 Inference System)
+
+The CoreSpan 5090 Inference System connects multiple RTX 5090 GPUs via NVLink. Use the dedicated `nvlink` subcommand to validate peer-to-peer interconnect health and bandwidth:
+
+```bash
+ai-studio-cli nvbandwidth nvlink
+```
+
+This runs six peer-to-peer testcases covering unidirectional and bidirectional NVLink transfers as well as all-to-host / host-to-all patterns.
+
+```bash
+# JSON output (for monitoring / alerting pipelines)
+ai-studio-cli nvbandwidth nvlink --json
+
+# Larger buffer and more samples for sustained-bandwidth measurement
+ai-studio-cli nvbandwidth nvlink --buffer-size 1024 --samples 10
+```
+
+The same flags as `run` and `test` apply.
 
 ---
 
