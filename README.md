@@ -99,6 +99,4 @@ The same flags as `run` and `test` apply.
 ## Usage Notes
 
 - **Sudo Password**: The tool will securely prompt for your sudo password interactively during setup.
-- **Assets**: Ensure `driversInstallation.sh` is placed in the `assets/` directory before starting.
-
 ---
