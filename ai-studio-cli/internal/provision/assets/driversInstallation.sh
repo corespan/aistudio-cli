@@ -70,7 +70,7 @@ detect_gpu() {
         elif echo "$GPU_UPPER" | grep -qE "A100|A6000|A30 |A10 |RTX 30|AMPERE|RTX A[0-9]"; then ARCH="ampere"
         elif echo "$GPU_UPPER" | grep -qE "RTX 40|L40|ADA|RTX 6000 ADA";                   then ARCH="ada"
         elif echo "$GPU_UPPER" | grep -qE "H100|H200|HOPPER";                               then ARCH="hopper"
-        elif echo "$GPU_UPPER" | grep -qE "RTX 50|B100|B200|BLACKWELL";                    then ARCH="blackwell"
+        elif echo "$GPU_UPPER" | grep -qE "RTX 5090|RTX 5080|RTX 5070|RTX 50|B100|B200|B300|GB202|BLACKWELL"; then ARCH="blackwell"
         fi
     fi
 
