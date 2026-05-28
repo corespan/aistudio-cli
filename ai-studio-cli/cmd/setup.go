@@ -48,25 +48,48 @@ var setupNVBandwidthCmd = &cobra.Command{
 	},
 }
 
+var setupVLLMCmd = &cobra.Command{
+	Use:   "vllm",
+	Short: "Install dependencies for vLLM (Docker, NVIDIA Container Toolkit)",
+	Long: `Automates the installation of vLLM requirements:
+- Installs Docker Engine if Docker is not already installed
+- Installs NVIDIA Container Toolkit if a GPU is detected`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := prepareProvisioner()
+		if err != nil {
+			return err
+		}
+		return p.SetupVLLMDeps()
+	},
+}
+
 func prepareProvisioner() (*provision.Provisioner, error) {
-	var sudoPassword string
+	var passBytes []byte
+
 	if cfgPass := config.GetSetupSudoPassword(); cfgPass != "" {
-		sudoPassword = cfgPass
+		passBytes = []byte(cfgPass)
 	} else {
 		fmt.Print("Enter local sudo password: ")
-		passBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+		var err error
+		passBytes, err = term.ReadPassword(int(os.Stdin.Fd()))
 		if err != nil {
 			return nil, fmt.Errorf("failed to read sudo password: %v", err)
 		}
 		fmt.Println()
-		sudoPassword = string(passBytes)
 	}
 
-	return provision.NewProvisioner(sudoPassword), nil
+	p := provision.NewProvisioner(passBytes)
+
+	for i := range passBytes {
+		passBytes[i] = 0
+	}
+
+	return p, nil
 }
 
 func init() {
 	setupCmd.AddCommand(setupDependenciesCmd)
 	setupCmd.AddCommand(setupNVBandwidthCmd)
+	setupCmd.AddCommand(setupVLLMCmd)
 	rootCmd.AddCommand(setupCmd)
 }
