@@ -44,6 +44,14 @@ Run this to verify drivers, clone `nvbandwidth` from GitHub, and compile it.
 ai-studio-cli setup nvbandwidth
 ```
 
+**Phase 3 — Install vLLM Dependencies (Optional)**
+
+If you intend to run inference benchmarks using the Docker fallback strategy, you must install Docker Engine and the NVIDIA Container Toolkit.
+
+```bash
+ai-studio-cli setup vllm
+```
+
 ---
 
 ## GPU Bandwidth Benchmarking
@@ -93,6 +101,148 @@ ai-studio-cli nvbandwidth nvlink --buffer-size 1024 --samples 10
 ```
 
 The same flags as `run` and `test` apply.
+
+---
+
+## Inference Benchmarking (vLLM)
+
+The `bench` subcommand provides an automated way for testing LLM serving performance (Throughput, TTFT, TPOT) using `vllm`.
+
+### Quick Start — Zero-Config Benchmark
+
+The CLI comes bundled with a default, optimized `docker-compose.yaml` (configured for `Qwen2.5-32B-Instruct` with FP8 and PP-4 and TP-1). If you don't provide a compose file, it will use this default automatically:
+
+```bash
+# Simplest case — uses the built-in default compose
+ai-studio-cli bench --requests 200 --concurrency 20 --max-tokens 1024
+
+# With Apache Bench
+ai-studio-cli ab-bench --requests 200 --concurrency 20 --max-tokens 1024
+```
+
+To keep the server running after the benchmark (e.g., for follow-up runs):
+```bash
+ai-studio-cli bench --keep-server --requests 200
+```
+
+> **Note:** If the server is already running on the endpoint, the CLI detects it and skips the compose-up step automatically.
+
+### Custom Compose File (Override)
+
+If you need full control over the Docker Compose configuration, provide your own file:
+```bash
+ai-studio-cli bench --compose-file docker-compose.yaml --requests 200 --concurrency 20
+```
+
+### Prerequisites (One-Time Setup)
+
+Before running benchmarks with the built-in vLLM server, ensure you have **Docker Engine** and the **NVIDIA Container Toolkit** installed on your system. 
+
+### Manual Server Management
+
+If you prefer to manage the vLLM server separately:
+```bash
+# Start the server
+ai-studio-cli vllm up --compose-file docker-compose.yaml
+
+# Check status
+ai-studio-cli vllm status
+
+# View logs
+ai-studio-cli vllm logs -f
+
+# Stop the server
+ai-studio-cli vllm down
+```
+
+> **Bring Your Own Server:** If you already have vLLM running natively or on another machine, skip the compose steps entirely and pass `--endpoint http://<ip>:<port>` directly to the `bench` commands.
+
+### 1. Benchmark using Synthetic/Random Tokens (Default)
+If you don't provide a dataset, the tool defaults to the `random` dataset. It will automatically generate synthetic gibberish requests based on your token length flags. This is the best way to test maximum theoretical hardware throughput.
+```bash
+ai-studio-cli bench --endpoint http://<ip>:<port> --input-len 512 --max-tokens 256 --concurrency 64
+```
+
+### 2. Benchmark using a Custom Prompt
+Provide an exact string to test. The CLI will automatically generate a temporary dataset behind the scenes, repeating your prompt for the requested amount.
+```bash
+ai-studio-cli bench --endpoint http://<ip>:<port> --prompt "Explain the concept of machine learning." --requests 100 --concurrency 10
+```
+
+### 3. Benchmark using a Real Dataset (ShareGPT)
+For realistic testing, you can download this standard dataset available:
+
+**Setup — Download the standard dataset:**
+HuggingFace now requires a free account token to download this dataset. Ensure your `HF_TOKEN` is exported, then run:
+
+```bash
+wget --header="Authorization: Bearer $HF_TOKEN" https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json
+```
+
+**Run the benchmark:**
+```bash
+ai-studio-cli bench --endpoint http://<ip>:<port> --dataset sharegpt --dataset-path ./ShareGPT_V3_unfiltered_cleaned_split.json --requests 1000 --concurrency 32
+```
+
+### Hybrid Execution Strategy
+
+The benchmarking tool automatically determines the best way to run the test:
+1. **Local Execution**: If `vllm` is installed locally in your Python environment (e.g., via `pip install vllm`), it will run the benchmark natively to avoid overhead.
+2. **Docker Fallback**: If `vllm` is missing (common on fresh nodes), it automatically falls back to pulling and running the `vllm/vllm-openai:latest` Docker image. The Docker container uses host networking to reach your inference server.
+
+### Auto-Detection & Structured Results
+
+Results are automatically saved to a structured directory in the following format:
+`bench-results/{model}/{gpu_tag}/{timestamp}/benchmark_result.json`
+
+- **Model Name**: If you don't specify `--model`, the tool hits the `/v1/models` endpoint of your inference server to auto-detect the served model.
+- **GPU Tag**: The tool reads `nvidia-smi` to auto-detect your hardware (e.g., `A100-SXM4-80GB`). You can override this with `--gpu-tag`.
+
+#### Flags for `bench`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--endpoint` | `http://[IP_ADDRESS]:[PORT]` | Address of the vLLM OpenAI-compatible server |
+| `--model` | *(auto-detected)* | Name of the model to request |
+| `--dataset` | `random` | Dataset type: `random`, `sharegpt`, `custom` |
+| `--dataset-path`| | Path to dataset JSON (if using `sharegpt`) |
+| `--prompt` | | Single custom prompt string to use |
+| `--requests` | `1000` | Number of requests to process |
+| `--concurrency` | `10` | Number of concurrent requests |
+| `--gpu-tag` | *(auto-detected)* | Override the detected GPU tag for the results folder |
+| `--compose-file`| | Custom docker-compose.yml; overrides the built-in default |
+| `--keep-server` | `false` | Leave the vLLM server running after the benchmark |
+| `--server-timeout`| `900` | Seconds to wait for the vLLM server to become ready |
+
+---
+
+### Benchmark Dashboard (`bench-ui`)
+
+A built-in web dashboard for visualising and comparing benchmark results. The entire UI is embedded in the binary — no additional files or dependencies needed.
+
+```bash
+
+# Launch the dashboard
+ai-studio-cli bench-ui --port 8050 --open
+
+# Point to a different results directory
+ai-studio-cli bench-ui --result-dir /path/to/bench-results
+```
+
+The dashboard provides:
+- **KPI cards** — Total throughput, output throughput, TTFT, and TPOT at a glance
+- **Performance trend chart** — Visualise metrics across runs with configurable Y-axis
+- **Model config bar** — Shows TP/PP, quantization, dtype, max model length, GPU memory utilization
+- **Filterable table** — Filter by model, GPU, and precision; search across all runs
+- **Sidebar navigation** — Quickly switch between benchmark runs
+
+#### Flags for `bench-ui`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--port` | `9090` | HTTP listen port for the dashboard |
+| `--result-dir` | `bench-results` | Root of the structured benchmark results directory |
+| `--open` | `false` | Automatically open the dashboard in the default browser |
 
 ---
 

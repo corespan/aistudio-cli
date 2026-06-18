@@ -1,0 +1,45 @@
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: qwen35b-vllm
+
+    ipc: host
+    restart: unless-stopped
+
+    ports:
+      - "8010:8000"
+
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      HF_HOME: /models/cache
+      TRANSFORMERS_CACHE: /models/cache
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - /models/cache:/models/cache
+      - /models/models:/models/models
+    command: >
+      --disable-custom-all-reduce
+      --model Qwen/Qwen2.5-32B-Instruct
+      --served-model-name Qwen2.5-32B
+      --host 0.0.0.0
+      --port 8000
+      --pipeline-parallel-size 4
+      --tensor-parallel-size 1
+      --quantization fp8
+      --dtype bfloat16
+      --gpu-memory-utilization 0.90
+      --max-model-len 32768
+      --max-num-seqs 128
+      --enable-prefix-caching
+      --trust-remote-code
+      --enable-chunked-prefill
+      --max-num-batched-tokens 65536
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
