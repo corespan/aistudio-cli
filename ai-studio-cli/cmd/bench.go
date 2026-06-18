@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -14,7 +15,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// serverConfig groups the fields that control server lifecycle and Docker image selection.
+type serverConfig struct {
+	composeFile string
+	keepServer  bool
+	timeoutSec  int
+	vllmImage   string
+}
+
 type benchRunner struct {
+	server            serverConfig
 	endpoint          string
 	apiEndpoint       string
 	model             string
@@ -39,7 +49,6 @@ type benchRunner struct {
 	metadata          []string
 	additionalArgs    []string
 	gpuTag            string
-	vllmImage         string
 }
 
 var bench = &benchRunner{}
@@ -48,7 +57,8 @@ var benchCmd = &cobra.Command{
 	Use:   "bench",
 	Short: "Run vLLM's built-in serving benchmark",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return bench.run(cmd)
+		runner := *bench
+		return runner.run(cmd)
 	},
 }
 
@@ -61,14 +71,14 @@ func (r *benchRunner) registerFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&r.endpoint, "endpoint", "http://localhost:8010", "vLLM base URL or full endpoint URL")
 	cmd.Flags().StringVar(&r.apiEndpoint, "api-endpoint", "/v1/completions", "API path for vLLM benchmark requests")
 	cmd.Flags().StringVar(&r.model, "model", "", "Model name to request; if empty, auto-detected from /v1/models")
-	cmd.Flags().IntVar(&r.concurrency, "concurrency", 8, "Maximum concurrent benchmark requests")
-	cmd.Flags().IntVar(&r.requests, "requests", 50, "Total benchmark prompts to send")
-	cmd.Flags().IntVar(&r.maxTokens, "max-tokens", 128, "Target output token length")
+	cmd.Flags().IntVar(&r.concurrency, "concurrency", 128, "Maximum concurrent benchmark requests (match the server's --max-num-seqs)")
+	cmd.Flags().IntVar(&r.requests, "requests", 1000, "Total benchmark prompts to send")
+	cmd.Flags().IntVar(&r.maxTokens, "max-tokens", 256, "Target output token length")
 	cmd.Flags().StringVar(&r.dataset, "dataset", "random", "Dataset name for vLLM bench: random, sonnet, sharegpt, custom, hf, etc.")
 	cmd.Flags().StringVar(&r.datasetPath, "dataset-path", "", "Dataset path for datasets that require one")
 	cmd.Flags().IntVar(&r.warmup, "warmup", 2, "Number of warmup requests")
 	cmd.Flags().StringVar(&r.promptStr, "prompt", "", "Single prompt string to repeat for every request")
-	cmd.Flags().IntVar(&r.inputLen, "input-len", 128, "Target input token length for synthetic datasets")
+	cmd.Flags().IntVar(&r.inputLen, "input-len", 512, "Target input token length for synthetic datasets")
 	cmd.Flags().StringVar(&r.requestRate, "request-rate", "inf", "Request rate passed to vLLM bench serve")
 	cmd.Flags().StringVar(&r.resultDir, "result-dir", "bench-results", "Directory for vLLM benchmark result JSON")
 	cmd.Flags().StringVar(&r.resultFilename, "result-filename", "benchmark_result.json", "Filename for vLLM benchmark result JSON")
@@ -80,13 +90,29 @@ func (r *benchRunner) registerFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&r.appendResult, "append-result", false, "Append to the result JSON instead of replacing it")
 	cmd.Flags().BoolVar(&r.saveDetailed, "save-detailed", false, "Ask vLLM bench to save per-request details")
 	cmd.Flags().StringArrayVar(&r.metadata, "metadata", nil, "Metadata key=value to save in the result JSON; can be repeated")
-	cmd.Flags().StringArrayVar(&r.additionalArgs, "vllm-arg", nil, "Additional raw argument for vllm bench serve; can be repeated")
+	cmd.Flags().StringArrayVar(&r.additionalArgs, "vllm-arg", nil, "Additional raw argument for vllm bench serve; can be repeated (advanced: do not interpolate untrusted input)")
 	cmd.Flags().StringVar(&r.gpuTag, "gpu-tag", "", "GPU tag for structured result path (auto-detected if empty)")
-	cmd.Flags().StringVar(&r.vllmImage, "vllm-image", "vllm/vllm-openai:latest", "Docker image to use for benchmarking if vllm is not installed locally")
+	// Server lifecycle flags
+	cmd.Flags().StringVar(&r.server.vllmImage, "vllm-image", "vllm/vllm-openai:latest", "Docker image to use for benchmarking if vllm is not installed locally")
+	cmd.Flags().StringVar(&r.server.composeFile, "compose-file", "", "Path to a custom docker-compose.yml; uses bundled default if server is unreachable and this is unset")
+	cmd.Flags().BoolVar(&r.server.keepServer, "keep-server", false, "Leave the vLLM server running after the benchmark completes")
+	cmd.Flags().IntVar(&r.server.timeoutSec, "server-timeout", 900, "Maximum seconds to wait for the vLLM server to become ready (default allows for large model load times)")
 }
 
 // entry point
 func (r *benchRunner) run(cmd *cobra.Command) error {
+	// Check compose file
+	effectiveCompose, cleanup, err := serverLifecycle(r.server.composeFile, r.endpoint, r.server.timeoutSec, r.server.keepServer)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	return r.runBenchmark(cmd, effectiveCompose)
+}
+
+// runBenchmark contains the core benchmarking logic, decoupled from lifecycle management.
+func (r *benchRunner) runBenchmark(cmd *cobra.Command, composePath string) error {
 	apiEndpointChanged := cmd.Flags().Changed("api-endpoint")
 	host, port, apiEndpoint, err := splitBenchmarkEndpoint(r.endpoint, r.apiEndpoint, apiEndpointChanged)
 	if err != nil {
@@ -106,6 +132,11 @@ func (r *benchRunner) run(cmd *cobra.Command) error {
 
 	timestamp := time.Now().Format("2006-01-02T15-04-05")
 	structuredDir := filepath.Join(r.resultDir, sanitizePath(modelName), sanitizePath(gpu), timestamp)
+	// Absolute so the path matches the Docker bind mount (absDir:absDir); a
+	// relative --result-dir resolves against the container WORKDIR and is lost.
+	if abs, err := filepath.Abs(structuredDir); err == nil {
+		structuredDir = abs
+	}
 
 	args := r.buildArgs(host, port, apiEndpoint, modelName, datasetName, structuredDir)
 
@@ -119,12 +150,17 @@ func (r *benchRunner) run(cmd *cobra.Command) error {
 		return fmt.Errorf("creating result directory: %w", err)
 	}
 
-	if err := r.execute(args, structuredDir); err != nil {
+	if err := r.execute(cmd.Context(), args, structuredDir); err != nil {
 		return err
 	}
 
 	resultPath := filepath.Join(structuredDir, r.resultFilename)
 	fmt.Printf("\nResult saved to: %s\n", resultPath)
+
+	if err := r.patchResultJSON(resultPath, composePath); err != nil {
+		fmt.Printf("Warning: could not enrich result JSON: %v\n", err)
+	}
+
 	printPerGPUThroughput(resultPath)
 	return nil
 }
@@ -152,11 +188,13 @@ func (r *benchRunner) resolveModel() (string, error) {
 
 	fmt.Printf("No model specified; querying %s/v1/models...\n", baseEndpoint)
 	models, err := getVLLMModels(baseEndpoint)
-	if err != nil || len(models) == 0 {
-		fmt.Printf("Warning: failed to auto-detect model from %s/v1/models: %v\n", baseEndpoint, err)
-		return "unknown-model", nil
+	if err != nil {
+		return "", fmt.Errorf("failed to auto-detect model: %w\n  Hint: pass --model explicitly", err)
 	}
-	fmt.Printf("Using model: %s\n", models[0])
+	if len(models) == 0 {
+		return "", fmt.Errorf("no models returned by vLLM at %s; pass --model explicitly", baseEndpoint)
+	}
+	fmt.Printf("Detected model: %s\n", models[0])
 	return models[0], nil
 }
 
@@ -181,7 +219,7 @@ func (r *benchRunner) buildArgs(host, port, apiEndpoint, modelName, datasetName,
 		"--result-filename", r.resultFilename,
 	}
 
-	if r.model != "" {
+	if modelName != "" {
 		args = append(args, "--model", modelName)
 	}
 	if r.datasetPath != "" && r.promptStr == "" {
@@ -209,10 +247,10 @@ func (r *benchRunner) buildArgs(host, port, apiEndpoint, modelName, datasetName,
 	return args
 }
 
-func (r *benchRunner) execute(args []string, structuredDir string) error {
+func (r *benchRunner) execute(ctx context.Context, args []string, structuredDir string) error {
 	if isVllmAvailable() {
 		fmt.Printf("Launching: vllm %s\n", shellJoin(args))
-		cmd := exec.Command("vllm", args...)
+		cmd := exec.CommandContext(ctx, "vllm", args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin
@@ -223,11 +261,7 @@ func (r *benchRunner) execute(args []string, structuredDir string) error {
 	}
 
 	if isDockerAvailable() {
-		fmt.Println("vllm not found locally; falling back to Docker.")
-		if err := r.runInDocker(args, structuredDir); err != nil {
-			return fmt.Errorf("vllm bench serve via Docker failed: %w", err)
-		}
-		return nil
+		return r.runInDocker(ctx, args, structuredDir)
 	}
 
 	return fmt.Errorf("neither 'vllm' nor 'docker' commands found; please install vLLM locally or install Docker")
@@ -268,14 +302,14 @@ func (r *benchRunner) applyPromptDataset(args *[]string) (func(), error) {
 	return func() { _ = os.RemoveAll(dir) }, nil
 }
 
-func (r *benchRunner) runInDocker(args []string, structuredDir string) error {
-	if err := ensureImagePulled(r.vllmImage); err != nil {
+func (r *benchRunner) runInDocker(ctx context.Context, args []string, resultDir string) error {
+	if err := ensureImagePulled(ctx, r.server.vllmImage); err != nil {
 		return err
 	}
 
 	dockerArgs := []string{"run", "--rm", "--network", "host", "--entrypoint", "vllm"}
 
-	if absDir, err := filepath.Abs(structuredDir); err == nil {
+	if absDir, err := filepath.Abs(resultDir); err == nil {
 		dockerArgs = append(dockerArgs, "-v", fmt.Sprintf("%s:%s", absDir, absDir))
 	}
 
@@ -289,11 +323,12 @@ func (r *benchRunner) runInDocker(args []string, structuredDir string) error {
 		}
 	}
 
-	dockerArgs = append(dockerArgs, r.vllmImage)
+	dockerArgs = append(dockerArgs, r.server.vllmImage)
 	dockerArgs = append(dockerArgs, args...)
 
 	fmt.Printf("Launching Docker: docker %s\n", shellJoin(dockerArgs))
-	cmd := exec.Command("docker", dockerArgs...)
+
+	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -331,10 +366,14 @@ func splitBenchmarkEndpoint(rawEndpoint, explicitPath string, apiEndpointChanged
 }
 
 func backendForEndpoint(apiEndpoint string) string {
-	if strings.Contains(apiEndpoint, "/chat/completions") {
+	switch {
+	case strings.Contains(apiEndpoint, "/chat/completions"):
 		return "openai-chat"
+	case strings.Contains(apiEndpoint, "/v1/completions"):
+		return "openai"
+	default:
+		return "vllm"
 	}
-	return "vllm"
 }
 
 func shellJoin(args []string) string {
@@ -356,41 +395,31 @@ func printPerGPUThroughput(resultPath string) {
 	}
 
 	var res struct {
-		OutputThroughput float64        `json:"output_throughput"`
-		Metadata         map[string]any `json:"metadata"`
+		OutputThroughput     float64     `json:"output_throughput"`
+		TotalTokenThroughput float64     `json:"total_token_throughput"`
+		ModelConfig          ModelConfig `json:"model_config"`
 	}
-	if err := json.Unmarshal(data, &res); err != nil || res.Metadata == nil {
+	if err := json.Unmarshal(data, &res); err != nil {
 		return
 	}
 
-	tpSize := parseFloatMetadata(res.Metadata, "tp", 1)
-	ppSize := parseFloatMetadata(res.Metadata, "pp", 1)
+	tpSize := float64(res.ModelConfig.TensorParallel)
+	ppSize := float64(res.ModelConfig.PipelineParallel)
+	if tpSize == 0 {
+		tpSize = 1
+	}
+	if ppSize == 0 {
+		ppSize = 1
+	}
 
 	totalGPUs := tpSize * ppSize
 	if totalGPUs > 1 {
 		fmt.Printf(
-			"\n[Metadata] Normalized Throughput per GPU: %.2f tok/s (TP=%.0f, PP=%.0f)\n",
-			res.OutputThroughput/totalGPUs, tpSize, ppSize,
+			"\n[Per-GPU] Total tok/s: %.2f  Output tok/s: %.2f  |  Total GPUs: %.0f (TP=%.0f × PP=%.0f)\n",
+			res.TotalTokenThroughput/totalGPUs, res.OutputThroughput/totalGPUs,
+			totalGPUs, tpSize, ppSize,
 		)
 	}
-}
-
-func parseFloatMetadata(m map[string]any, key string, defaultVal float64) float64 {
-	v, ok := m[key]
-	if !ok {
-		return defaultVal
-	}
-	switch val := v.(type) {
-	case float64:
-		if val > 0 {
-			return val
-		}
-	case string:
-		if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
-			return f
-		}
-	}
-	return defaultVal
 }
 
 func detectGPUTag() string {
@@ -407,7 +436,7 @@ func detectGPUTag() string {
 }
 
 func sanitizePath(name string) string {
-	r := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-")
+	r := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-", "..", "")
 	return r.Replace(name)
 }
 
@@ -419,12 +448,12 @@ func isDockerAvailable() bool {
 	return exec.Command("docker", "--version").Run() == nil
 }
 
-func ensureImagePulled(image string) error {
-	if exec.Command("docker", "image", "inspect", image).Run() == nil {
+func ensureImagePulled(ctx context.Context, image string) error {
+	if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() == nil {
 		return nil
 	}
 	fmt.Printf("Pulling %s (this may take a while on first run)...\n", image)
-	pull := exec.Command("docker", "pull", image)
+	pull := exec.CommandContext(ctx, "docker", "pull", image)
 	pull.Stdout = os.Stdout
 	pull.Stderr = os.Stderr
 	return pull.Run()

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="AI Studio CLI — Benchmark Results Dashboard." />
+  <title>Benchmarks — AI Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+  <script src="chart.umd.min.js"></script>
+  <link rel="stylesheet" href="index.css" />
+</head>
+
+<body>
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="sidebar-brand">
+      <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+        <polyline points="2 17 12 22 22 17"></polyline>
+        <polyline points="2 12 12 17 22 12"></polyline>
+      </svg>
+      <span class="brand-text">AI Studio</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section">
+        <span class="nav-section-label">Benchmarks</span>
+        <div id="sidebar-run-list" class="nav-items">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <span class="sidebar-footer-text">ai-studio-cli</span>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main id="content">
+    <header id="page-header">
+      <div class="header-left">
+        <h1 id="page-title">Benchmarks</h1>
+        <span class="breadcrumb">AI Studio</span>
+      </div>
+      <div class="header-right">
+        <span id="run-count-badge" class="badge badge-teal">0 runs</span>
+      </div>
+    </header>
+
+    <div id="dashboard">
+      <!-- KPI Cards Row -->
+      <section id="kpi-row">
+        <div class="metric-card">
+          <span class="metric-label">Total Token Throughput</span>
+          <span class="metric-value" id="val-total-throughput">—</span>
+          <span class="metric-unit">tok/s</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Output Throughput</span>
+          <span class="metric-value" id="val-output-throughput">—</span>
+          <span class="metric-unit">tok/s</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Mean TTFT</span>
+          <span class="metric-value" id="val-ttft">—</span>
+          <span class="metric-unit">ms</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Mean TPOT</span>
+          <span class="metric-value" id="val-tpot">—</span>
+          <span class="metric-unit">ms</span>
+        </div>
+      </section>
+
+      <!-- Model Config Bar -->
+      <section id="config-bar" class="config-bar hidden">
+        <span class="config-bar-label">Model Config:</span>
+        <span class="config-badge" id="cfg-tp" title="Tensor Parallel"></span>
+        <span class="config-badge" id="cfg-pp" title="Pipeline Parallel"></span>
+        <span class="config-badge config-badge-precision" id="cfg-quant" title="Quantization / Precision"></span>
+        <span class="config-badge" id="cfg-dtype" title="Data type"></span>
+        <span class="config-badge" id="cfg-maxlen" title="Max model length"></span>
+        <span class="config-badge" id="cfg-gmem" title="GPU memory utilisation"></span>
+      </section>
+
+      <!-- Chart + Filters -->
+      <section id="chart-section">
+        <div class="card chart-card">
+          <div class="card-header">
+            <h2 class="card-title">Performance Trend</h2>
+          </div>
+          <div class="chart-container">
+            <canvas id="perf-chart"></canvas>
+          </div>
+        </div>
+
+        <div class="card filters-card" id="filters-panel">
+          <div class="card-header">
+            <h2 class="card-title">Configuration</h2>
+          </div>
+          <div class="filter-body">
+            <div class="filter-group">
+              <label for="filter-model">Model</label>
+              <select id="filter-model">
+                <option value="">All Models</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="filter-gpu">GPU Type</label>
+              <select id="filter-gpu">
+                <option value="">All GPUs</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="filter-precision">Precision</label>
+              <select id="filter-precision">
+                <option value="">All Precisions</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="filter-metric">Y-axis Metric</label>
+              <select id="filter-metric">
+                <option value="total_token_throughput" selected>Total Token Throughput</option>
+                <option value="output_throughput">Output Throughput</option>
+                <option value="request_throughput">Request Throughput</option>
+                <option value="mean_ttft_ms">Mean TTFT</option>
+                <option value="mean_tpot_ms">Mean TPOT</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Detailed Metrics Table -->
+      <section id="table-section">
+        <div class="card table-card">
+          <div class="card-header">
+            <h2 class="card-title">Benchmark Runs</h2>
+            <div class="table-search-wrap">
+              <input type="text" id="table-search" placeholder="Search…" class="search-input" />
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table id="runs-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>GPU</th>
+                  <th>Precision</th>
+                  <th>TP / PP</th>
+                  <th>Concurrency</th>
+                  <th>Total Throughput (tok/s)</th>
+                  <th>Output (tok/s)</th>
+                  <th>TTFT (ms)</th>
+                  <th>TPOT (ms)</th>
+                  <th>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody id="runs-table-body">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="empty-state hidden">
+      <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M3 3v18h18" />
+        <path d="M7 16l4-8 4 4 4-6" />
+      </svg>
+      <h2>No Benchmark Results</h2>
+      <p>Run <code>ai-studio-cli bench</code> to generate results, then refresh this page.</p>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
