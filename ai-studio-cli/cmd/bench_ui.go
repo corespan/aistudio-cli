@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -45,14 +46,30 @@ func init() {
 }
 
 func runBenchUI() error {
-	router := benchui.NewRouter(uiResultDir)
+	return serveBenchUI(uiResultDir, uiPort, uiAutoOpen)
+}
 
-	addr := fmt.Sprintf(":%d", uiPort)
-	localURL := fmt.Sprintf("http://localhost:%d", uiPort)
-	networkURL := fmt.Sprintf("http://0.0.0.0:%d", uiPort)
+func serveBenchUI(resultDir string, port int, autoOpen bool) error {
+	router := benchui.NewRouter(resultDir)
+
+	// Get a free port
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		fmt.Printf("Port %d is in use; picking a free port instead...\n", port)
+		ln, err = net.Listen("tcp", ":0")
+		if err != nil {
+			return fmt.Errorf("could not open a port for the dashboard: %w", err)
+		}
+	}
+	port = ln.Addr().(*net.TCPAddr).Port
+
+	localURL := fmt.Sprintf("http://localhost:%d", port)
+	networkURL := ""
+	if ip := outboundIP(); ip != "" {
+		networkURL = fmt.Sprintf("http://%s:%d", ip, port)
+	}
 
 	srv := &http.Server{
-		Addr:         addr,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -62,6 +79,7 @@ func runBenchUI() error {
 	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(stop)
 
 	errCh := make(chan error, 1)
 
@@ -70,19 +88,21 @@ func runBenchUI() error {
 		fmt.Printf("  │  AI Studio Benchmark Dashboard          │\n")
 		fmt.Printf("  │                                         │\n")
 		fmt.Printf("  │  ➜  Local:   %-26s│\n", localURL)
-		fmt.Printf("  │  ➜  Network: %-26s│\n", networkURL)
-		fmt.Printf("  │  ➜  Results: %-26s│\n", uiResultDir)
+		if networkURL != "" {
+			fmt.Printf("  │  ➜  Network: %-26s│\n", networkURL)
+		}
+		fmt.Printf("  │  ➜  Results: %-26s│\n", resultDir)
 		fmt.Printf("  │                                         │\n")
 		fmt.Printf("  │  Press Ctrl+C to stop                   │\n")
 		fmt.Printf("  └─────────────────────────────────────────┘\n\n")
 
-		if uiAutoOpen {
+		if autoOpen {
 			openBrowser(localURL)
 		}
 	}()
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
@@ -91,12 +111,24 @@ func runBenchUI() error {
 	case <-stop:
 		fmt.Println("\nShutting down...")
 	case err := <-errCh:
-		return fmt.Errorf("server failed: %w (is port %d already in use?)", err, uiPort)
+		return fmt.Errorf("dashboard server failed: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(ctx)
+}
+
+func outboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+		return addr.IP.String()
+	}
+	return ""
 }
 
 func openBrowser(url string) {

@@ -4,21 +4,25 @@ A command-line tool for node provisioning (CUDA toolkit, Nvidia recommended driv
 
 Supports all major NVIDIA GPU architectures including the **CoreSpan 5090 Inference System** (Blackwell / RTX 5090, GB202). The provisioning script automatically detects the RTX 5090, selects CUDA 12.8, and installs driver 570+.
 
-## Building from Source
+## Installation
+
+### Quick Install (from GitHub Releases)
 
 ```bash
+curl -sL https://raw.githubusercontent.com/corespan/aistudio-cli/master/install.sh | bash
+```
+
+This downloads the latest release binary for your platform and installs it to `/usr/local/bin`. Requires `curl`, `tar`, and `sudo`.
+
+### Building from Source
+
+```bash
+cd ai-studio-cli
+
 go mod tidy
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ai-studio-cli .
-```
 
----
-
-## Installation
-
-After building, move the binary to `/usr/local/bin` to use it globally:
-
-```bash
 sudo mv ai-studio-cli /usr/local/bin/
 ```
 
