@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"bytes"
 	_ "embed"
 	"fmt"
 	"os"
@@ -127,7 +128,9 @@ func (p *Provisioner) SetupVLLMDeps() error {
 
 	scriptPath := "/tmp/installVllmDeps.sh"
 	fmt.Println("Staging vLLM deps script to /tmp...")
-	if err := os.WriteFile(scriptPath, installVllmDepsScript, 0755); err != nil {
+
+	script := bytes.ReplaceAll(installVllmDepsScript, []byte("\r\n"), []byte("\n"))
+	if err := os.WriteFile(scriptPath, script, 0755); err != nil {
 		return fmt.Errorf("failed to stage script: %v", err)
 	}
 

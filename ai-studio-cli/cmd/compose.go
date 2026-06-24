@@ -31,6 +31,38 @@ type composeConfig struct {
 	Services map[string]composeService `yaml:"services"`
 }
 
+func ExtractModelPath(composePath string) string {
+	if composePath == "" {
+		return ""
+	}
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return ""
+	}
+	var cf composeConfig
+	if err := yaml.Unmarshal(data, &cf); err != nil {
+		return ""
+	}
+	svc, _, found := findVLLMService(cf.Services)
+	if !found && len(cf.Services) > 0 {
+		svc = cf.Services[sortedServiceNames(cf.Services)[0]]
+	}
+	tokens := flattenCommand(svc.Command)
+	for i, tok := range tokens {
+		flagName, inlineVal, hasInline := strings.Cut(tok, "=")
+		if flagName != "--model" {
+			continue
+		}
+		if hasInline {
+			return strings.TrimSpace(inlineVal)
+		}
+		if i+1 < len(tokens) {
+			return strings.TrimSpace(tokens[i+1])
+		}
+	}
+	return ""
+}
+
 // ExtractModelConfig reads a docker-compose file and returns model config.
 func ExtractModelConfig(composePath string) (ModelConfig, []string) {
 	cfg := ModelConfig{TensorParallel: 1, PipelineParallel: 1}
@@ -89,27 +121,29 @@ func sortedServiceNames(services map[string]composeService) []string {
 }
 
 func findVLLMService(services map[string]composeService) (composeService, string, bool) {
-	// A service literally named "vllm" is the serving one (a sibling
-	// "benchmark" service often shares the same image but has no command).
-	if svc, ok := services["vllm"]; ok {
+	// Helper: does this service look like vLLM based on image or command content?
+	looksLikeVLLM := func(svc composeService) bool {
+		img := strings.ToLower(svc.Image)
+		cmdParts := flattenCommand(svc.Command)
+		cmd := strings.ToLower(strings.Join(cmdParts, " "))
+		return strings.Contains(img, "vllm") ||
+			strings.Contains(cmd, "vllm") ||
+			strings.Contains(cmd, "vllm.entrypoints")
+	}
+
+	if svc, ok := services["vllm"]; ok && looksLikeVLLM(svc) {
 		return svc, "vllm", true
 	}
 
-	// Otherwise pick a vllm-looking service, preferring one that actually
-	// carries a command (the flags we need to parse) over an empty one.
 	var fallback composeService
 	var fallbackName string
 	found := false
 	for _, name := range sortedServiceNames(services) {
 		svc := services[name]
-		cmdParts := flattenCommand(svc.Command)
-		cmd := strings.ToLower(strings.Join(cmdParts, " "))
-		img := strings.ToLower(svc.Image)
-		if !strings.Contains(img, "vllm") &&
-			!strings.Contains(cmd, "vllm") &&
-			!strings.Contains(cmd, "vllm.entrypoints") {
+		if !looksLikeVLLM(svc) {
 			continue
 		}
+		cmdParts := flattenCommand(svc.Command)
 		if len(cmdParts) > 0 {
 			return svc, name, true
 		}

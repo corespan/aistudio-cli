@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // serverConfig groups the fields that control server lifecycle and Docker image selection.
@@ -49,6 +50,8 @@ type benchRunner struct {
 	metadata          []string
 	additionalArgs    []string
 	gpuTag            string
+	openUI            bool
+	uiPort            int
 }
 
 var bench = &benchRunner{}
@@ -71,9 +74,9 @@ func (r *benchRunner) registerFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&r.endpoint, "endpoint", "http://localhost:8010", "vLLM base URL or full endpoint URL")
 	cmd.Flags().StringVar(&r.apiEndpoint, "api-endpoint", "/v1/completions", "API path for vLLM benchmark requests")
 	cmd.Flags().StringVar(&r.model, "model", "", "Model name to request; if empty, auto-detected from /v1/models")
-	cmd.Flags().IntVar(&r.concurrency, "concurrency", 128, "Maximum concurrent benchmark requests (match the server's --max-num-seqs)")
-	cmd.Flags().IntVar(&r.requests, "requests", 1000, "Total benchmark prompts to send")
-	cmd.Flags().IntVar(&r.maxTokens, "max-tokens", 256, "Target output token length")
+	cmd.Flags().IntVar(&r.concurrency, "concurrency", 20, "Maximum concurrent benchmark requests")
+	cmd.Flags().IntVar(&r.requests, "requests", 200, "Total benchmark prompts to send")
+	cmd.Flags().IntVar(&r.maxTokens, "max-tokens", 1024, "Target output token length")
 	cmd.Flags().StringVar(&r.dataset, "dataset", "random", "Dataset name for vLLM bench: random, sonnet, sharegpt, custom, hf, etc.")
 	cmd.Flags().StringVar(&r.datasetPath, "dataset-path", "", "Dataset path for datasets that require one")
 	cmd.Flags().IntVar(&r.warmup, "warmup", 2, "Number of warmup requests")
@@ -97,21 +100,42 @@ func (r *benchRunner) registerFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&r.server.composeFile, "compose-file", "", "Path to a custom docker-compose.yml; uses bundled default if server is unreachable and this is unset")
 	cmd.Flags().BoolVar(&r.server.keepServer, "keep-server", false, "Leave the vLLM server running after the benchmark completes")
 	cmd.Flags().IntVar(&r.server.timeoutSec, "server-timeout", 900, "Maximum seconds to wait for the vLLM server to become ready (default allows for large model load times)")
+	// Dashboard
+	cmd.Flags().BoolVar(&r.openUI, "ui", true, "On an interactive terminal, launch the results dashboard when the run finishes and print a clickable link (blocks until Ctrl+C); auto-skipped for non-interactive/CI runs, or pass --ui=false")
+	cmd.Flags().IntVar(&r.uiPort, "ui-port", 9090, "Port for the dashboard launched by --ui")
 }
 
 // entry point
 func (r *benchRunner) run(cmd *cobra.Command) error {
-	// Check compose file
 	effectiveCompose, cleanup, err := serverLifecycle(r.server.composeFile, r.endpoint, r.server.timeoutSec, r.server.keepServer)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
 
-	return r.runBenchmark(cmd, effectiveCompose)
+	cleanedUp := false
+	teardown := func() {
+		if !cleanedUp {
+			cleanedUp = true
+			cleanup()
+		}
+	}
+	defer teardown()
+
+	if err := r.runBenchmark(cmd, effectiveCompose); err != nil {
+		return err
+	}
+
+	teardown()
+
+	if r.openUI && term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Printf("\nLaunching results dashboard (Ctrl+C to stop)...\n")
+		if err := serveBenchUI(r.resultDir, r.uiPort, false); err != nil {
+			fmt.Fprintf(os.Stderr, "dashboard failed to start: %v\n", err)
+		}
+	}
+	return nil
 }
 
-// runBenchmark contains the core benchmarking logic, decoupled from lifecycle management.
 func (r *benchRunner) runBenchmark(cmd *cobra.Command, composePath string) error {
 	apiEndpointChanged := cmd.Flags().Changed("api-endpoint")
 	host, port, apiEndpoint, err := splitBenchmarkEndpoint(r.endpoint, r.apiEndpoint, apiEndpointChanged)
@@ -125,6 +149,8 @@ func (r *benchRunner) runBenchmark(cmd *cobra.Command, composePath string) error
 		return err
 	}
 
+	r.ensureTokenizer(composePath, modelName)
+
 	gpu := r.gpuTag
 	if gpu == "" {
 		gpu = detectGPUTag()
@@ -132,8 +158,6 @@ func (r *benchRunner) runBenchmark(cmd *cobra.Command, composePath string) error
 
 	timestamp := time.Now().Format("2006-01-02T15-04-05")
 	structuredDir := filepath.Join(r.resultDir, sanitizePath(modelName), sanitizePath(gpu), timestamp)
-	// Absolute so the path matches the Docker bind mount (absDir:absDir); a
-	// relative --result-dir resolves against the container WORKDIR and is lost.
 	if abs, err := filepath.Abs(structuredDir); err == nil {
 		structuredDir = abs
 	}
@@ -163,6 +187,27 @@ func (r *benchRunner) runBenchmark(cmd *cobra.Command, composePath string) error
 
 	printPerGPUThroughput(resultPath)
 	return nil
+}
+
+func (r *benchRunner) ensureTokenizer(composePath, modelName string) {
+	if composePath == "" || hasTokenizerArg(r.additionalArgs) {
+		return
+	}
+	modelPath := ExtractModelPath(composePath)
+	if modelPath == "" || modelPath == modelName {
+		return
+	}
+	r.additionalArgs = append(r.additionalArgs, "--tokenizer="+modelPath)
+	fmt.Printf("Served model %q is an alias; using tokenizer %q from compose file.\n", modelName, modelPath)
+}
+
+func hasTokenizerArg(args []string) bool {
+	for _, a := range args {
+		if a == "--tokenizer" || strings.HasPrefix(a, "--tokenizer=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *benchRunner) resolveDatasetName() string {
