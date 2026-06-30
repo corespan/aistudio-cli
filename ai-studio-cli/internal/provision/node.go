@@ -136,8 +136,18 @@ func (p *Provisioner) SetupLocalPhase2() error {
 	return nil
 }
 
-func (p *Provisioner) SetupVLLMDeps() error {
+// SetupVLLMDeps installs the container runtime and GPU dependencies for vLLM.
+// runtime selects which engine to set up: "docker" (default), "podman", or "both".
+func (p *Provisioner) SetupVLLMDeps(runtime string) error {
 	defer p.Close()
+
+	switch runtime {
+	case "", "docker", "podman", "both", "all":
+		p.containerRuntime = runtime
+	default:
+		return fmt.Errorf("invalid runtime %q: use docker, podman, or both", runtime)
+	}
+
 	fmt.Println("Starting vLLM dependency setup...")
 
 	scriptPath := "/tmp/installVllmDeps.sh"

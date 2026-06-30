@@ -65,7 +65,8 @@ func init() {
 	abBenchCmd.Flags().IntVar(&abRequests, "requests", 1000, "Total number of requests to send (-n)")
 	abBenchCmd.Flags().StringVar(&abOutputFile, "output", "", "Write ab gnuplot output to this file (ab -g flag); empty = skip")
 	abBenchCmd.Flags().StringArrayVar(&abExtraArgs, "ab-arg", nil, "Additional raw argument for ab; can be repeated (advanced: do not interpolate untrusted input)")
-	abBenchCmd.Flags().StringVar(&abComposeFile, "compose-file", "", "Path to a custom docker-compose.yml; uses bundled default if server is unreachable and this is unset")
+	abBenchCmd.Flags().StringVar(&abComposeFile, "compose-file", "", "Path to a custom compose file; uses bundled default if server is unreachable and this is unset")
+	abBenchCmd.Flags().StringVar(&containerRuntime, "runtime", "auto", "Container engine: auto, docker, or podman")
 	abBenchCmd.Flags().BoolVar(&abKeepServer, "keep-server", false, "Leave the vLLM server running after the benchmark completes")
 	abBenchCmd.Flags().IntVar(&abServerTimeout, "server-timeout", 900, "Maximum seconds to wait for the vLLM server to become ready (default allows for large model load times)")
 

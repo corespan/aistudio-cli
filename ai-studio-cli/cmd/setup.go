@@ -50,18 +50,21 @@ var setupNVBandwidthCmd = &cobra.Command{
 	},
 }
 
+var setupVLLMRuntime string
+
 var setupVLLMCmd = &cobra.Command{
 	Use:   "vllm",
-	Short: "Install dependencies for vLLM (Docker, NVIDIA Container Toolkit)",
+	Short: "Install dependencies for vLLM (Docker/Podman, NVIDIA Container Toolkit)",
 	Long: `Automates the installation of vLLM requirements:
-- Installs Docker Engine if Docker is not already installed
-- Installs NVIDIA Container Toolkit if a GPU is detected`,
+- Installs the chosen container runtime (--runtime: docker, podman, or both)
+- Installs NVIDIA Container Toolkit if a GPU is detected
+- Configures GPU access (Docker NVIDIA runtime, or a Podman CDI spec)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		p, err := prepareProvisioner()
 		if err != nil {
 			return err
 		}
-		return p.SetupVLLMDeps()
+		return p.SetupVLLMDeps(setupVLLMRuntime)
 	},
 }
 
@@ -92,6 +95,8 @@ func prepareProvisioner() (*provision.Provisioner, error) {
 func init() {
 	setupDependenciesCmd.Flags().StringVar(&setupRuntime, "runtime", "docker",
 		"GPU container runtime to configure: docker, podman, or both")
+	setupVLLMCmd.Flags().StringVar(&setupVLLMRuntime, "runtime", "docker",
+		"Container runtime to install for vLLM: docker, podman, or both")
 
 	setupCmd.AddCommand(setupDependenciesCmd)
 	setupCmd.AddCommand(setupNVBandwidthCmd)

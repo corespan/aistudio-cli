@@ -11,7 +11,9 @@ import (
 //go:embed assets/docker-compose.yaml
 var defaultComposeFile []byte
 
-// generateComposeFile extracts the bundled docker-compose.yaml to a stable config directory.
+// generateComposeFile extracts the bundled compose file to a stable config
+// directory, adapting the GPU passthrough syntax to the active container
+// runtime (Docker reservation vs. podman CDI devices).
 func generateComposeFile() (path string, cleanup func(), err error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -22,14 +24,21 @@ func generateComposeFile() (path string, cleanup func(), err error) {
 		return "", nil, fmt.Errorf("creating config dir: %w", err)
 	}
 
-	path = filepath.Join(dir, "docker-compose.yaml")
+	engine := currentEngine()
+	content := composeForRuntime(defaultComposeFile, engine)
+
+	name := "docker-compose.yaml"
+	if engine.isPodman() {
+		name = "podman-compose.yaml"
+	}
+	path = filepath.Join(dir, name)
 
 	needWrite := true
 	if existing, readErr := os.ReadFile(path); readErr == nil {
-		needWrite = !bytes.Equal(existing, defaultComposeFile)
+		needWrite = !bytes.Equal(existing, content)
 	}
 	if needWrite {
-		if err := os.WriteFile(path, defaultComposeFile, 0644); err != nil {
+		if err := os.WriteFile(path, content, 0644); err != nil {
 			return "", nil, fmt.Errorf("writing compose file: %w", err)
 		}
 	}

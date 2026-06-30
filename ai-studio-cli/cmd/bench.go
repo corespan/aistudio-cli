@@ -96,8 +96,9 @@ func (r *benchRunner) registerFlags(cmd *cobra.Command) {
 	cmd.Flags().StringArrayVar(&r.additionalArgs, "vllm-arg", nil, "Additional raw argument for vllm bench serve; can be repeated (advanced: do not interpolate untrusted input)")
 	cmd.Flags().StringVar(&r.gpuTag, "gpu-tag", "", "GPU tag for structured result path (auto-detected if empty)")
 	// Server lifecycle flags
-	cmd.Flags().StringVar(&r.server.vllmImage, "vllm-image", "vllm/vllm-openai:latest", "Docker image to use for benchmarking if vllm is not installed locally")
-	cmd.Flags().StringVar(&r.server.composeFile, "compose-file", "", "Path to a custom docker-compose.yml; uses bundled default if server is unreachable and this is unset")
+	cmd.Flags().StringVar(&containerRuntime, "runtime", "auto", "Container engine: auto, docker, or podman")
+	cmd.Flags().StringVar(&r.server.vllmImage, "vllm-image", "vllm/vllm-openai:latest", "Container image to use for benchmarking if vllm is not installed locally")
+	cmd.Flags().StringVar(&r.server.composeFile, "compose-file", "", "Path to a custom compose file; uses bundled default if server is unreachable and this is unset")
 	cmd.Flags().BoolVar(&r.server.keepServer, "keep-server", false, "Leave the vLLM server running after the benchmark completes")
 	cmd.Flags().IntVar(&r.server.timeoutSec, "server-timeout", 900, "Maximum seconds to wait for the vLLM server to become ready (default allows for large model load times)")
 	// Dashboard
@@ -305,11 +306,12 @@ func (r *benchRunner) execute(ctx context.Context, args []string, structuredDir 
 		return nil
 	}
 
-	if isDockerAvailable() {
-		return r.runInDocker(ctx, args, structuredDir)
+	engine := currentEngine()
+	if isContainerEngineAvailable(engine) {
+		return r.runInContainer(ctx, engine, args, structuredDir)
 	}
 
-	return fmt.Errorf("neither 'vllm' nor 'docker' commands found; please install vLLM locally or install Docker")
+	return fmt.Errorf("neither 'vllm' nor a container engine (%s) was found; install vLLM locally or install %s", engine.cli(), engine.cli())
 }
 
 // applyPromptDataset writes the --prompt string to a temporary JSONL file
@@ -347,33 +349,40 @@ func (r *benchRunner) applyPromptDataset(args *[]string) (func(), error) {
 	return func() { _ = os.RemoveAll(dir) }, nil
 }
 
-func (r *benchRunner) runInDocker(ctx context.Context, args []string, resultDir string) error {
-	if err := ensureImagePulled(ctx, r.server.vllmImage); err != nil {
+// runInContainer runs the vLLM benchmark client in a container when vLLM is not
+// installed locally. The client is a plain HTTP load generator (it talks to the
+// already-running server endpoint), so it does not request GPU access itself.
+func (r *benchRunner) runInContainer(ctx context.Context, engine containerEngine, args []string, resultDir string) error {
+	if err := ensureImagePulled(ctx, engine, r.server.vllmImage); err != nil {
 		return err
 	}
 
-	dockerArgs := []string{"run", "--rm", "--network", "host", "--entrypoint", "vllm"}
+	runArgs := []string{"run", "--rm", "--network", "host", "--entrypoint", "vllm"}
+	if engine.isPodman() {
+		// Avoid SELinux denials on bind-mounted dirs (no-op on AppArmor hosts).
+		runArgs = append(runArgs, "--security-opt=label=disable")
+	}
 
 	if absDir, err := filepath.Abs(resultDir); err == nil {
-		dockerArgs = append(dockerArgs, "-v", fmt.Sprintf("%s:%s", absDir, absDir))
+		runArgs = append(runArgs, "-v", fmt.Sprintf("%s:%s", absDir, absDir))
 	}
 
 	for i, arg := range args {
 		if arg == "--dataset-path" && i+1 < len(args) {
 			if absDataset, err := filepath.Abs(args[i+1]); err == nil {
 				datasetDir := filepath.Dir(absDataset)
-				dockerArgs = append(dockerArgs, "-v", fmt.Sprintf("%s:%s", datasetDir, datasetDir))
+				runArgs = append(runArgs, "-v", fmt.Sprintf("%s:%s", datasetDir, datasetDir))
 			}
 			break
 		}
 	}
 
-	dockerArgs = append(dockerArgs, r.server.vllmImage)
-	dockerArgs = append(dockerArgs, args...)
+	runArgs = append(runArgs, r.server.vllmImage)
+	runArgs = append(runArgs, args...)
 
-	fmt.Printf("Launching Docker: docker %s\n", shellJoin(dockerArgs))
+	fmt.Printf("Launching container: %s %s\n", engine.cli(), shellJoin(runArgs))
 
-	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
+	cmd := exec.CommandContext(ctx, engine.cli(), runArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -489,16 +498,16 @@ func isVllmAvailable() bool {
 	return exec.Command("vllm", "--version").Run() == nil
 }
 
-func isDockerAvailable() bool {
-	return exec.Command("docker", "--version").Run() == nil
+func isContainerEngineAvailable(engine containerEngine) bool {
+	return exec.Command(engine.cli(), "--version").Run() == nil
 }
 
-func ensureImagePulled(ctx context.Context, image string) error {
-	if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() == nil {
+func ensureImagePulled(ctx context.Context, engine containerEngine, image string) error {
+	if exec.CommandContext(ctx, engine.cli(), "image", "inspect", image).Run() == nil {
 		return nil
 	}
 	fmt.Printf("Pulling %s (this may take a while on first run)...\n", image)
-	pull := exec.CommandContext(ctx, "docker", "pull", image)
+	pull := exec.CommandContext(ctx, engine.cli(), "pull", image)
 	pull.Stdout = os.Stdout
 	pull.Stderr = os.Stderr
 	return pull.Run()
