@@ -40,6 +40,29 @@ ai-studio-cli setup dependencies
 
 > If the installation of drivers occurs, the system reboots at the end of Phase 1.
 
+**Choosing a container runtime (Docker / Podman)**
+
+Phase 1 installs the NVIDIA Container Toolkit and configures GPU access for the
+container runtime of your choice. Select it with `--runtime`:
+
+```bash
+# Docker (default) — configures the NVIDIA container runtime
+ai-studio-cli setup dependencies --runtime docker
+
+# Podman — generates a CDI spec (/etc/cdi/nvidia.yaml) and installs podman
+ai-studio-cli setup dependencies --runtime podman
+
+# Both
+ai-studio-cli setup dependencies --runtime both
+```
+
+The toolkit package is identical for both; only the access mechanism differs —
+Docker uses the NVIDIA container runtime, while Podman uses the Container Device
+Interface (CDI). With Podman, run GPU containers via
+`podman run --device nvidia.com/gpu=all ...`. The CDI spec is regenerated
+automatically after driver updates/reboots when the `nvidia-cdi-refresh`
+service is available (NVIDIA Container Toolkit ≥ 1.18).
+
 **Phase 2 — Build nvbandwidth**
 
 Run this to verify drivers, clone `nvbandwidth` from GitHub, and compile it.
