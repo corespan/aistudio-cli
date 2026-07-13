@@ -205,11 +205,33 @@ setup_container_runtime() {
         if ! command -v podman &>/dev/null; then
             echo "Installing Podman..."
             sudo -E apt-get install -y podman
-            # podman-compose is optional (universe); don't fail the run if absent.
-            sudo -E apt-get install -y podman-compose \
-                || echo "  Note: podman-compose unavailable via apt — install with 'pip install podman-compose' if needed."
         else
             echo "Podman already installed: $(podman --version)"
+        fi
+
+        # CDI GPU passthrough needs Podman >= 4.1; Ubuntu 20.04 ships 3.4.x.
+        PODMAN_VER=$(podman --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+        PODMAN_MAJOR=$(echo "$PODMAN_VER" | cut -d. -f1)
+        if [ -n "$PODMAN_MAJOR" ] && [ "$PODMAN_MAJOR" -lt 4 ]; then
+            echo "WARNING: Podman $PODMAN_VER is too old for CDI GPU passthrough (needs >= 4.1)."
+            echo "  'podman run --device nvidia.com/gpu=all' will not work — upgrade Podman or use Docker."
+        fi
+
+        # podman-compose honours CDI devices ('podman compose' drops them). It
+        # is not packaged on older Ubuntu, so fall back to pip3 when needed.
+        if ! command -v podman-compose &>/dev/null; then
+            echo "Installing podman-compose..."
+            if sudo -E apt-get install -y podman-compose 2>/dev/null; then
+                echo "podman-compose installed via apt."
+            else
+                if ! command -v pip3 &>/dev/null; then
+                    sudo -E apt-get install -y python3-pip
+                fi
+                # PEP 668 (Ubuntu 23.04+): retry with --break-system-packages.
+                sudo -E pip3 install podman-compose 2>/dev/null \
+                    || sudo -E pip3 install --break-system-packages podman-compose \
+                    || echo "  Note: could not install podman-compose; install manually: sudo pip3 install --break-system-packages podman-compose"
+            fi
         fi
 
         # Podman accesses GPUs through a CDI spec, not the Docker runtime hook.

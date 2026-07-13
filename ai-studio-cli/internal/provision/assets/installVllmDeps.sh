@@ -33,6 +33,10 @@ fi
 HAS_GPU=false
 if lspci 2>/dev/null | grep -qi nvidia; then
     HAS_GPU=true
+elif command -v lshw > /dev/null 2>&1 && lshw -C display 2>/dev/null | grep -qi nvidia; then
+    HAS_GPU=true
+elif command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi -L > /dev/null 2>&1; then
+    HAS_GPU=true
 fi
 
 # Install the NVIDIA Container Toolkit. Shared by Docker and Podman — the
@@ -139,12 +143,51 @@ setup_podman() {
         podman --version
     fi
 
-    # podman-compose is what honours CDI devices; 'podman compose' (the
-    # docker-compose shim) silently drops them. Install best-effort.
-    if ! command -v podman-compose > /dev/null 2>&1; then
+    # CDI GPU passthrough (podman run --device nvidia.com/gpu=all) needs
+    # Podman >= 4.1. Ubuntu 20.04 ships 3.4.x, which cannot do CDI at all.
+    local pv pmajor pminor
+    pv=$(podman version --format '{{.Client.Version}}' 2>/dev/null || true)
+    if [ -z "$pv" ]; then
+        pv=$(podman --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+    fi
+    pmajor=$(echo "$pv" | cut -d. -f1)
+    pminor=$(echo "$pv" | cut -d. -f2)
+    [ -z "$pminor" ] && pminor=0
+    if [ -n "$pmajor" ] && { [ "$pmajor" -lt 4 ] || { [ "$pmajor" -eq 4 ] && [ "$pminor" -lt 1 ]; }; }; then
+        echo ""
+        echo "WARNING: Podman $pv is too old for CDI GPU passthrough (requires >= 4.1)."
+        echo "  'podman run --device nvidia.com/gpu=all' will NOT work on this version."
+        echo "  Ubuntu 20.04 ships Podman 3.4.x. Options:"
+        echo "    - Use Docker instead:       ai-studio-cli setup vllm --runtime docker"
+        echo "    - Upgrade Podman to >= 4.1 (newer Ubuntu, or a backports/Kubic repo)."
+        echo ""
+    fi
+
+    # podman-compose honours CDI devices; 'podman compose' (the docker-compose
+    # shim) silently drops them. It is not packaged on older Ubuntu, so fall
+    # back to pip3 when apt cannot provide it.
+    if command -v podman-compose > /dev/null 2>&1; then
+        echo "podman-compose already installed: $(podman-compose --version 2>/dev/null | head -1)"
+    else
         echo "Installing podman-compose..."
-        sudo -E apt-get install -y podman-compose \
-            || echo "  Note: podman-compose unavailable via apt — install with 'pip install podman-compose'."
+        if sudo -E apt-get install -y podman-compose 2>/dev/null; then
+            echo "podman-compose installed via apt."
+        else
+            echo "podman-compose not in apt repos — installing via pip3..."
+            if ! command -v pip3 > /dev/null 2>&1; then
+                sudo -E apt-get install -y python3-pip
+            fi
+            # PEP 668 (Ubuntu 23.04+) marks the system Python as externally
+            # managed, so a plain 'pip3 install' is rejected — retry with
+            # --break-system-packages for those releases.
+            if sudo -E pip3 install podman-compose 2>/dev/null \
+               || sudo -E pip3 install --break-system-packages podman-compose; then
+                echo "podman-compose installed via pip3."
+            else
+                echo "Warning: failed to install podman-compose. Install it manually:"
+                echo "  sudo pip3 install --break-system-packages podman-compose"
+            fi
+        fi
     fi
 
     if [ "$HAS_GPU" = "true" ]; then
