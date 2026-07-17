@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/corespan/ai-studio-cli/internal/power"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -52,6 +53,17 @@ type benchRunner struct {
 	gpuTag            string
 	openUI            bool
 	uiPort            int
+
+	// cost metrics
+	costEnabled         bool
+	systemBundle        string
+	pue                 float64
+	pricingFile         string
+	avgGPUWattsOverride float64
+
+	// populated at runtime
+	measuredNodeWatts float64 // total node draw sampled during the run
+	resolvedGPU       string
 }
 
 var bench = &benchRunner{}
@@ -103,6 +115,12 @@ func (r *benchRunner) registerFlags(cmd *cobra.Command) {
 	// Dashboard
 	cmd.Flags().BoolVar(&r.openUI, "ui", true, "On an interactive terminal, launch the results dashboard when the run finishes and print a clickable link (blocks until Ctrl+C); auto-skipped for non-interactive/CI runs, or pass --ui=false")
 	cmd.Flags().IntVar(&r.uiPort, "ui-port", 9090, "Port for the dashboard launched by --ui")
+	// Cost metrics
+	cmd.Flags().BoolVar(&r.costEnabled, "cost", true, "Compute rent-vs-buy cost metrics and embed them in the result JSON")
+	cmd.Flags().StringVar(&r.systemBundle, "system-bundle", "", "Named system bundle from the pricing config (e.g. PRU2500_8x5090) to price the owned node as an all-in system")
+	cmd.Flags().Float64Var(&r.pue, "pue", 0, "Power Usage Effectiveness for owned-side electricity (0 = use pricing config default)")
+	cmd.Flags().StringVar(&r.pricingFile, "pricing-file", "", "Path to an external hardware_pricing.json to override the embedded pricing config")
+	cmd.Flags().Float64Var(&r.avgGPUWattsOverride, "avg-gpu-watts", 0, "Override GPU power draw (watts per GPU) for cost energy; 0 = sample live via nvidia-smi")
 }
 
 // entry point
@@ -155,6 +173,7 @@ func (r *benchRunner) runBenchmark(cmd *cobra.Command, composePath string) error
 	if gpu == "" {
 		gpu = detectGPUTag()
 	}
+	r.resolvedGPU = gpu
 
 	timestamp := time.Now().Format("2006-01-02T15-04-05")
 	structuredDir := filepath.Join(r.resultDir, sanitizePath(modelName), sanitizePath(gpu), timestamp)
@@ -174,8 +193,19 @@ func (r *benchRunner) runBenchmark(cmd *cobra.Command, composePath string) error
 		return fmt.Errorf("creating result directory: %w", err)
 	}
 
-	if err := r.execute(cmd.Context(), args, structuredDir); err != nil {
-		return err
+	// Sample GPU power during the run so the cost engine can charge realistic
+	// owned-side electricity (no telemetry stack exists otherwise).
+	var sampler *power.Sampler
+	if r.costEnabled && r.avgGPUWattsOverride <= 0 {
+		sampler = power.NewSampler(2 * time.Second)
+		sampler.Start()
+	}
+	runErr := r.execute(cmd.Context(), args, structuredDir)
+	if sampler != nil {
+		r.measuredNodeWatts = sampler.Stop()
+	}
+	if runErr != nil {
+		return runErr
 	}
 
 	resultPath := filepath.Join(structuredDir, r.resultFilename)

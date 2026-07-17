@@ -32,6 +32,14 @@ func (r *benchRunner) patchResultJSON(resultPath, composePath string) error {
 		raw["total_token_throughput"] = outTP + inTP
 	}
 
+	if r.costEnabled {
+		if err := r.injectCostMetrics(raw, cfg); err != nil {
+			fmt.Printf("  [cost] warning: %v\n", err)
+		} else {
+			fmt.Println("  [cost] rent-vs-buy metrics added to result JSON")
+		}
+	}
+
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshalling patched result: %w", err)
