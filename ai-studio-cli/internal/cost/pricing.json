@@ -2,8 +2,7 @@
   "meta": {
     "last_updated_utc": "2026-07-17T00:00:00",
     "electricity_kwh_usd": 0.087,
-    "pue": 1.15,
-    "electricity_source": "US industrial average, EIA (Apr 2026 ~8.66c/kWh)"
+    "pue": 1.15
   },
   "corespan_inventory": {
     "gpus": {
@@ -19,17 +18,14 @@
         "description": "PRU 2500 + 8x RTX 5090, direct liquid cooling included. All-in list price amortized over 3 years.",
         "capex_usd": 99999,
         "lifespan_years": 3,
-        "num_gpus": 8,
-        "gpu_model": "RTX 5090"
+        "num_gpus": 8
       }
     }
   },
   "market_rates": {
     "gpus": {
       "Tesla T4": {
-        "hyperscaler_sku": "Standard_NC4as_T4_v3",
         "rental_hourly_usd": 0.13,
-        "neocloud_blended_hourly_usd": 0.2,
         "hyperscaler_hourly_usd": 0.526,
         "rental_tiers": {
           "spot":             { "usd_hr": 0.08,  "label": "Spot (Vast.ai low)" },
@@ -40,21 +36,29 @@
         }
       },
       "A100": {
-        "hyperscaler_sku": "Standard_NC24ads_A100_v4",
-        "rental_hourly_usd": 2.0,
-        "neocloud_blended_hourly_usd": 1.5,
-        "hyperscaler_hourly_usd": 0.746721
+        "rental_hourly_usd": 0.72,
+        "hyperscaler_hourly_usd": 3.67,
+        "rental_tiers": {
+          "spot":             { "usd_hr": 0.6,  "label": "Spot (Spheron)" },
+          "peer":             { "usd_hr": 0.72, "label": "Peer marketplace (Vast.ai)" },
+          "reserved":         { "usd_hr": 1.07, "label": "On-demand community (Spheron)" },
+          "dedicated_median": { "usd_hr": 1.64, "label": "Dedicated on-demand (RunPod)" },
+          "premium_secure":   { "usd_hr": 2.06, "label": "Premium SLA (Lambda)" }
+        }
       },
       "H100": {
-        "hyperscaler_sku": "Standard_ND96isr_H100_v5",
-        "rental_hourly_usd": 4.5,
-        "neocloud_blended_hourly_usd": 3.0,
-        "hyperscaler_hourly_usd": 12.29
+        "rental_hourly_usd": 1.99,
+        "hyperscaler_hourly_usd": 6.98,
+        "rental_tiers": {
+          "spot":             { "usd_hr": 1.55, "label": "Spot (Vast.ai)" },
+          "peer":             { "usd_hr": 1.99, "label": "Community pool (RunPod)" },
+          "reserved":         { "usd_hr": 2.2,  "label": "Reserved / committed" },
+          "dedicated_median": { "usd_hr": 2.99, "label": "Dedicated on-demand median" },
+          "premium_secure":   { "usd_hr": 3.99, "label": "Premium secure on-demand" }
+        }
       },
       "RTX 5070": {
-        "hyperscaler_sku": "Generic",
         "rental_hourly_usd": 0.09,
-        "neocloud_blended_hourly_usd": 0.15,
         "hyperscaler_hourly_usd": 0.67,
         "rental_tiers": {
           "spot":             { "usd_hr": 0.06, "label": "Spot (Vast.ai floor)" },
@@ -65,9 +69,7 @@
         }
       },
       "RTX 5090": {
-        "hyperscaler_sku": "Generic",
         "rental_hourly_usd": 0.36,
-        "neocloud_blended_hourly_usd": 0.65,
         "hyperscaler_hourly_usd": 0.99,
         "rental_tiers": {
           "spot":             { "usd_hr": 0.27, "label": "Spot / Batch (Salad)" },
@@ -79,9 +81,7 @@
         }
       },
       "DEFAULT": {
-        "hyperscaler_sku": "Generic",
         "rental_hourly_usd": 1.25,
-        "neocloud_blended_hourly_usd": 1.0,
         "hyperscaler_hourly_usd": 3.0
       }
     }

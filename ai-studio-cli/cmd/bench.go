@@ -62,8 +62,8 @@ type benchRunner struct {
 	avgGPUWattsOverride float64
 
 	// populated at runtime
-	measuredNodeWatts float64 // total node draw sampled during the run
-	resolvedGPU       string
+	gpuWattReadings []float64 // per-GPU draw sampled during the run
+	resolvedGPU     string
 }
 
 var bench = &benchRunner{}
@@ -202,7 +202,7 @@ func (r *benchRunner) runBenchmark(cmd *cobra.Command, composePath string) error
 	}
 	runErr := r.execute(cmd.Context(), args, structuredDir)
 	if sampler != nil {
-		r.measuredNodeWatts = sampler.Stop()
+		r.gpuWattReadings = sampler.Stop()
 	}
 	if runErr != nil {
 		return runErr

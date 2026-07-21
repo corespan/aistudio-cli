@@ -235,19 +235,20 @@ counts, GPU count (TP×PP), and GPU power.
 **Owned cost is fully loaded** — amortized hardware CapEx **plus electricity** (PUE-adjusted,
 US industrial rate) — so it is a fair comparison against rental rates, which already bundle power.
 
-- **Power** is the **total node draw measured live** during the run via `nvidia-smi` (busy + idle
-  GPUs = what you actually pay at the wall). If sampling is unavailable it falls back to the
-  per-GPU default in the pricing config, or to `--avg-gpu-watts`.
+- **Power** is measured live during the run via `nvidia-smi`, scoped to the **GPUs in use**
+  (the busiest `TP×PP` GPUs by draw) so electricity stays consistent with the per-GPU CapEx.
+  If sampling is unavailable it falls back to the per-GPU default in the pricing config, or to
+  `--avg-gpu-watts`.
 - **System bundles** contribute a **per-GPU** all-in price scaled by the GPUs the run actually
   used, so a 4-GPU run (`TP1×PP4`, the default compose) against the 8-GPU `PRU2500_8x5090` bundle
   prices 4 GPUs — while a full 8-GPU run reproduces the whole-node bundle price exactly.
 - Output includes cost-per-1M-tokens (3:1 output/input weighting) and a rent-vs-buy ladder across
   market tiers (spot → premium), each with a `buy`/`rent` verdict.
 
-**Supported GPUs** (auto-detected from `nvidia-smi`): RTX 5090, RTX 5070, Tesla T4, A100, H100
-(others fall back to `DEFAULT` pricing). The RTX 5090 + `PRU2500_8x5090` bundle reproduces the
-published [rent-or-buy blog](https://www.corespan.ai/resources/blog/rent-or-buy-rtx-5090-pru-2500)
-figures; RTX 5090 / 5070 / T4 carry a full rent-vs-buy tier ladder.
+**Supported GPUs** (auto-detected from `nvidia-smi`): RTX 5090, RTX 5070, Tesla T4, A100, H100 —
+each carries a full rent-vs-buy tier ladder (others fall back to `DEFAULT` pricing). The
+RTX 5090 + `PRU2500_8x5090` bundle reproduces the published
+[rent-or-buy blog](https://www.corespan.ai/resources/blog/rent-or-buy-rtx-5090-pru-2500) figures.
 
 ```bash
 # Price the owned side as the all-in PRU-2500 + 8x RTX 5090 system

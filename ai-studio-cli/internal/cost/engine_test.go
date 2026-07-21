@@ -152,30 +152,6 @@ func TestSubNodeBundleScalesByGPUsUsed(t *testing.T) {
 	}
 }
 
-// Fix #2: a live-measured total node power is billed directly (busy + idle),
-// independent of per-GPU estimates.
-func TestMeasuredNodeWattsUsedDirectly(t *testing.T) {
-	e := testEngine(t)
-	const measured = 2320.0 // e.g. 4 busy @ ~550W + 4 idle @ ~30W
-	res := e.CalculateLLM(LLMInput{
-		GPUName:           "NVIDIA GeForce RTX 5090",
-		NumGPUs:           4,
-		DurationSeconds:   windowHours * 3600,
-		AvgPowerWatts:     550, // should be ignored in favour of MeasuredNodeWatts
-		MeasuredNodeWatts: measured,
-		TotalInputTokens:  1_000_000,
-		TotalOutputTokens: 1_000_000,
-		Infra:             InfraConfig{SystemBundle: bundle},
-	})
-	wantEnergy := (measured / 1000.0) * 1.15 * windowHours * 0.087
-	if math.Abs(res.OwnedEnergyCostUSD-wantEnergy) > 1.0 {
-		t.Errorf("owned energy = %v, want ~%v (measured total must win)", res.OwnedEnergyCostUSD, wantEnergy)
-	}
-	if math.Abs(res.AvgGPUPowerWatts-(measured/4.0)) > 0.5 {
-		t.Errorf("reported per-GPU watts = %v, want ~%v", res.AvgGPUPowerWatts, measured/4.0)
-	}
-}
-
 func TestCalculateLLMTokenCosts(t *testing.T) {
 	e := testEngine(t)
 	res := e.CalculateLLM(LLMInput{

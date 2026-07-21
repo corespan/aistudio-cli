@@ -1,6 +1,9 @@
 // Package power samples GPU power draw via nvidia-smi during a benchmark run so
 // the cost engine can charge realistic owned-side electricity. aistudio-cli has
 // no Prometheus/telemetry stack, so this lightweight poller stands in for it.
+//
+// It records per-GPU draw so the caller can bill only the GPUs actually in use
+// (see cost integration), keeping electricity consistent with the per-GPU CapEx.
 package power
 
 import (
@@ -11,16 +14,15 @@ import (
 	"time"
 )
 
-// Sampler periodically records the total power draw across all visible GPUs so
-// the cost engine can bill exactly what the node consumes at the wall.
+// Sampler periodically records per-GPU power draw across visible GPUs.
 type Sampler struct {
 	interval time.Duration
 	stopCh   chan struct{}
 	doneCh   chan struct{}
 
-	mu    sync.Mutex
-	sum   float64
-	count int
+	mu      sync.Mutex
+	sums    []float64 // running sum of watts per GPU index
+	counts  []int     // samples counted per GPU index
 }
 
 // NewSampler returns a sampler that polls every interval (default 2s).
@@ -54,39 +56,48 @@ func (s *Sampler) Start() {
 }
 
 func (s *Sampler) sampleOnce() {
-	w, ok := queryTotalWatts()
+	watts, ok := queryPerGPUWatts()
 	if !ok {
 		return
 	}
 	s.mu.Lock()
-	s.sum += w
-	s.count++
+	if s.sums == nil {
+		s.sums = make([]float64, len(watts))
+		s.counts = make([]int, len(watts))
+	}
+	for i, w := range watts {
+		if i < len(s.sums) {
+			s.sums[i] += w
+			s.counts[i]++
+		}
+	}
 	s.mu.Unlock()
 }
 
-// Stop halts sampling and returns the time-averaged TOTAL node power in watts
-// (sum across all visible GPUs), or 0 if nothing could be sampled — e.g.
-// nvidia-smi absent.
-func (s *Sampler) Stop() float64 {
+// Stop halts sampling and returns the time-averaged watts for each visible GPU
+// (one entry per GPU index). Empty if nothing could be sampled — e.g.
+// nvidia-smi absent. The caller decides which GPUs count as "in use".
+func (s *Sampler) Stop() []float64 {
 	close(s.stopCh)
 	<-s.doneCh
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.count == 0 {
-		return 0
+	out := make([]float64, 0, len(s.sums))
+	for i := range s.sums {
+		if s.counts[i] > 0 {
+			out = append(out, s.sums[i]/float64(s.counts[i]))
+		}
 	}
-	return s.sum / float64(s.count)
+	return out
 }
 
-// queryTotalWatts returns the summed power.draw across all visible GPUs at one
-// instant (total node GPU power, busy + idle).
-func queryTotalWatts() (float64, bool) {
+// queryPerGPUWatts returns one power.draw reading per visible GPU at one instant.
+func queryPerGPUWatts() ([]float64, bool) {
 	out, err := exec.Command("nvidia-smi", "--query-gpu=power.draw", "--format=csv,noheader,nounits").Output()
 	if err != nil {
-		return 0, false
+		return nil, false
 	}
-	var sum float64
-	var n int
+	var watts []float64
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -96,11 +107,10 @@ func queryTotalWatts() (float64, bool) {
 		if err != nil {
 			continue
 		}
-		sum += v
-		n++
+		watts = append(watts, v)
 	}
-	if n == 0 {
-		return 0, false
+	if len(watts) == 0 {
+		return nil, false
 	}
-	return sum, true
+	return watts, true
 }

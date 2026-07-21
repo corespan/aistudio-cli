@@ -31,7 +31,6 @@ type BundleSpec struct {
 	CapexUSD      float64 `json:"capex_usd"`
 	LifespanYears float64 `json:"lifespan_years"`
 	NumGPUs       int     `json:"num_gpus"`
-	GPUModel      string  `json:"gpu_model"`
 }
 
 type Tier struct {
@@ -40,9 +39,7 @@ type Tier struct {
 }
 
 type MarketRate struct {
-	HyperscalerSKU       string          `json:"hyperscaler_sku"`
 	RentalHourlyUSD      float64         `json:"rental_hourly_usd"`
-	NeocloudBlendedUSD   float64         `json:"neocloud_blended_hourly_usd"`
 	HyperscalerHourlyUSD float64         `json:"hyperscaler_hourly_usd"`
 	RentalTiers          map[string]Tier `json:"rental_tiers"`
 }
@@ -52,7 +49,6 @@ type Config struct {
 		LastUpdatedUTC    string  `json:"last_updated_utc"`
 		ElectricityKWhUSD float64 `json:"electricity_kwh_usd"`
 		PUE               float64 `json:"pue"`
-		ElectricitySource string  `json:"electricity_source"`
 	} `json:"meta"`
 	CorespanInventory struct {
 		GPUs          map[string]HWSpec     `json:"gpus"`
@@ -74,8 +70,7 @@ type LLMInput struct {
 	GPUName           string
 	NumGPUs           int     // GPUs the workload actually used (e.g. TP*PP)
 	DurationSeconds   float64
-	AvgPowerWatts     float64 // per-GPU estimate; used when no measured total is available
-	MeasuredNodeWatts float64 // total node draw measured live; when > 0 it wins over AvgPowerWatts
+	AvgPowerWatts     float64 // per-GPU draw for the GPUs in use (measured or estimated)
 	TotalInputTokens  float64
 	TotalOutputTokens float64
 	Infra             InfraConfig
@@ -290,12 +285,9 @@ func (e *Engine) CalculateLLM(in LLMInput) LLMResult {
 
 	capex, eff := e.resolveCorespanCapex(gpuKey, in.NumGPUs, hours, in.Infra)
 
-	// Prefer measured total node power; otherwise estimate from per-GPU watts.
-	totalWatts := in.MeasuredNodeWatts
-	if totalWatts <= 0 {
-		totalWatts = in.AvgPowerWatts * float64(eff)
-	}
-	energy := e.ownedEnergyCost(totalWatts, hours, in.Infra)
+	// Power is scoped to the GPUs in use — per-GPU draw × the used count — so it
+	// stays consistent with the per-GPU CapEx (idle GPUs are not billed here).
+	energy := e.ownedEnergyCost(in.AvgPowerWatts*float64(eff), hours, in.Infra)
 	corespanTotal := capex + energy
 
 	market := e.marketRate(gpuKey)
@@ -320,16 +312,11 @@ func (e *Engine) CalculateLLM(in LLMInput) LLMResult {
 		}
 	}
 
-	perGPUWatts := 0.0
-	if eff > 0 {
-		perGPUWatts = totalWatts / float64(eff)
-	}
-
 	return LLMResult{
 		GPUDetected:           in.GPUName,
 		PricingSourceDate:     e.cfg.Meta.LastUpdatedUTC,
 		WorkloadDurationHours: round(hours, 6),
-		AvgGPUPowerWatts:      round(perGPUWatts, 2),
+		AvgGPUPowerWatts:      round(in.AvgPowerWatts, 2),
 		OwnedCapexOnlyUSD:     round(capex, 6),
 		OwnedEnergyCostUSD:    round(energy, 6),
 		OwnedFullyLoadedUSD:   round(corespanTotal, 6),
