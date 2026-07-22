@@ -532,15 +532,23 @@
     return isNaN(num) ? '—' : num.toFixed(2);
   }
 
-  // fmtUSD formats a dollar amount; whole dollars by default, or `decimals` places.
+  // fmtUSD formats a dollar amount. Pass `decimals` to force a fixed precision;
+  // otherwise it adapts — whole dollars for large sums, and enough decimals to
+  // reveal sub-cent values (so short-run costs show the real number, not "$0").
   function fmtUSD(val, decimals) {
     if (val == null) return '—';
     const num = Number(val);
     if (isNaN(num)) return '—';
-    const opts = decimals != null
-      ? { minimumFractionDigits: decimals, maximumFractionDigits: decimals }
-      : { maximumFractionDigits: 0 };
-    return '$' + num.toLocaleString(undefined, opts);
+    let d = decimals;
+    if (d == null) {
+      const abs = Math.abs(num);
+      if (abs === 0) d = 2;
+      else if (abs >= 1000) d = 0;              // $111,568
+      else if (abs >= 1) d = 2;                 // $25.09
+      // sub-dollar: ~2 significant figures so small costs show the real value
+      else d = Math.min(8, Math.max(2, 1 - Math.floor(Math.log10(abs))));
+    }
+    return '$' + num.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
   }
 
   function formatTimestamp(ts) {

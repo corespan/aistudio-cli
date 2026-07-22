@@ -254,16 +254,16 @@ func (e *Engine) coreLadder(gpuKey string, eff int, hours, capex, energy float64
 			Tier:         k,
 			Label:        t.Label,
 			RentalHourly: t.USDHr,
-			RentalTotal:  round(rentalTotal, 2),
-			SavingsVsBuy: round(savings, 2),
+			RentalTotal:  round(rentalTotal, 6),
+			SavingsVsBuy: round(savings, 6),
 			Verdict:      verdict,
 		})
 	}
 
 	return Ladder{
-		OwnedCapexOnly:   round(capex, 2),
-		OwnedEnergyCost:  round(energy, 2),
-		OwnedFullyLoaded: round(fullyLoaded, 2),
+		OwnedCapexOnly:   round(capex, 6),
+		OwnedEnergyCost:  round(energy, 6),
+		OwnedFullyLoaded: round(fullyLoaded, 6),
 		EffectiveNumGPUs: eff,
 		WindowHours:      round(hours, 4),
 		Tiers:            tiers,
