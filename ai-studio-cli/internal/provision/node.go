@@ -20,6 +20,10 @@ const nvbandwidthRepo = "https://github.com/NVIDIA/nvbandwidth.git"
 
 type Provisioner struct {
     sudoPassword []byte
+    // containerRuntime selects the GPU container runtime to configure in the
+    // setup script: "docker" (default), "podman", or "both". Empty means leave
+    // the script's own default in place.
+    containerRuntime string
 }
 
 func NewProvisioner(sudoPass []byte) *Provisioner {
@@ -35,8 +39,18 @@ func (p *Provisioner) Close() {
 	p.sudoPassword = nil
 }
 
-func (p *Provisioner) SetupLocal() error {
+// SetupLocal runs Phase 1. runtime selects the GPU container runtime to
+// configure: "docker" (default), "podman", or "both".
+func (p *Provisioner) SetupLocal(runtime string) error {
 	defer p.Close()
+
+	switch runtime {
+	case "", "docker", "podman", "both", "all":
+		p.containerRuntime = runtime
+	default:
+		return fmt.Errorf("invalid runtime %q: use docker, podman, or both", runtime)
+	}
+
 	fmt.Println("Starting Local Setup (Phase 1)...")
 
 	scriptPath := "/tmp/driversInstallation.sh"
@@ -122,8 +136,18 @@ func (p *Provisioner) SetupLocalPhase2() error {
 	return nil
 }
 
-func (p *Provisioner) SetupVLLMDeps() error {
+// SetupVLLMDeps installs the container runtime and GPU dependencies for vLLM.
+// runtime selects which engine to set up: "docker" (default), "podman", or "both".
+func (p *Provisioner) SetupVLLMDeps(runtime string) error {
 	defer p.Close()
+
+	switch runtime {
+	case "", "docker", "podman", "both", "all":
+		p.containerRuntime = runtime
+	default:
+		return fmt.Errorf("invalid runtime %q: use docker, podman, or both", runtime)
+	}
+
 	fmt.Println("Starting vLLM dependency setup...")
 
 	scriptPath := "/tmp/installVllmDeps.sh"
@@ -163,9 +187,11 @@ func (p *Provisioner) runSudoCmd(args ...string) error {
 }
 
 func (p *Provisioner) runLocalCommand(script, phase string) error {
-	shellArgs := []string{
-		"export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1",
+	exports := "export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1"
+	if p.containerRuntime != "" {
+		exports += fmt.Sprintf(" CONTAINER_RUNTIME=%s", p.containerRuntime)
 	}
+	shellArgs := []string{exports}
 	if phase != "" {
 		shellArgs = append(shellArgs, fmt.Sprintf("&& bash -- %s %s", script, phase))
 	} else {

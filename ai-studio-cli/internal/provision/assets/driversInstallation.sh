@@ -3,6 +3,10 @@ set -e
 
 PHASE=$1
 
+# Container runtime to enable for GPU access: docker (default), podman, or both.
+# Override via environment, e.g. CONTAINER_RUNTIME=podman
+CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
+
 # Detect OS and set the OS_STR variable (e.g. ubuntu2004, ubuntu2204, ubuntu2404)
 detect_os() {
     if [ -f /etc/os-release ]; then
@@ -169,6 +173,99 @@ check_driver_userspace_match() {
 
     echo "  Driver version matches userspace libraries — OK."
     RUNFILE_DRIVER_LOADED=true
+}
+
+# Configure GPU access for the selected container runtime(s).
+#   docker -> NVIDIA container runtime via 'nvidia-ctk runtime configure'
+#   podman -> Container Device Interface (CDI) spec via 'nvidia-ctk cdi generate'
+# Must be called AFTER the NVIDIA driver is installed and loaded so that CDI
+# generation can inspect the live driver. Assumes nvidia-container-toolkit is
+# already installed (it is, earlier in Phase 1).
+setup_container_runtime() {
+    local rt
+    rt=$(echo "$CONTAINER_RUNTIME" | tr '[:upper:]' '[:lower:]')
+
+    local want_docker=false
+    local want_podman=false
+    case "$rt" in
+        docker)   want_docker=true ;;
+        podman)   want_podman=true ;;
+        both|all) want_docker=true; want_podman=true ;;
+        *)
+            echo "Warning: unknown CONTAINER_RUNTIME='$CONTAINER_RUNTIME' — defaulting to docker."
+            want_docker=true
+            ;;
+    esac
+
+    echo ""
+    echo "--- Configuring GPU container runtime: $rt ---"
+
+    # --- Podman path (CDI) ---
+    if [ "$want_podman" = true ]; then
+        if ! command -v podman &>/dev/null; then
+            echo "Installing Podman..."
+            sudo -E apt-get install -y podman
+        else
+            echo "Podman already installed: $(podman --version)"
+        fi
+
+        # CDI GPU passthrough needs Podman >= 4.1; Ubuntu 20.04 ships 3.4.x.
+        PODMAN_VER=$(podman --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+        PODMAN_MAJOR=$(echo "$PODMAN_VER" | cut -d. -f1)
+        if [ -n "$PODMAN_MAJOR" ] && [ "$PODMAN_MAJOR" -lt 4 ]; then
+            echo "WARNING: Podman $PODMAN_VER is too old for CDI GPU passthrough (needs >= 4.1)."
+            echo "  'podman run --device nvidia.com/gpu=all' will not work — upgrade Podman or use Docker."
+        fi
+
+        # podman-compose honours CDI devices ('podman compose' drops them). It
+        # is not packaged on older Ubuntu, so fall back to pip3 when needed.
+        if ! command -v podman-compose &>/dev/null; then
+            echo "Installing podman-compose..."
+            if sudo -E apt-get install -y podman-compose 2>/dev/null; then
+                echo "podman-compose installed via apt."
+            else
+                if ! command -v pip3 &>/dev/null; then
+                    sudo -E apt-get install -y python3-pip
+                fi
+                # PEP 668 (Ubuntu 23.04+): retry with --break-system-packages.
+                sudo -E pip3 install podman-compose 2>/dev/null \
+                    || sudo -E pip3 install --break-system-packages podman-compose \
+                    || echo "  Note: could not install podman-compose; install manually: sudo pip3 install --break-system-packages podman-compose"
+            fi
+        fi
+
+        # Podman accesses GPUs through a CDI spec, not the Docker runtime hook.
+        sudo mkdir -p /etc/cdi
+        if sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml; then
+            echo "CDI spec written to /etc/cdi/nvidia.yaml"
+            echo "  Run GPU containers with: podman run --device nvidia.com/gpu=all ..."
+        else
+            echo "Warning: 'nvidia-ctk cdi generate' failed (driver may not be fully loaded yet)."
+            echo "  Regenerate after reboot: sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml"
+        fi
+
+        # Toolkit >= 1.18 ships a service that regenerates the CDI spec after
+        # driver upgrades and on reboot (the spec hard-codes driver paths).
+        # Enable it when present; it is a no-op on older toolkits.
+        if systemctl list-unit-files 2>/dev/null | grep -q '^nvidia-cdi-refresh.path'; then
+            sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service 2>/dev/null || true
+            echo "Enabled nvidia-cdi-refresh (auto-updates the CDI spec on driver changes)."
+        fi
+    fi
+
+    # --- Docker path (NVIDIA container runtime) ---
+    if [ "$want_docker" = true ]; then
+        if command -v docker &>/dev/null; then
+            echo "Configuring Docker to use the NVIDIA container runtime..."
+            sudo nvidia-ctk runtime configure --runtime=docker
+            sudo systemctl restart docker 2>/dev/null || true
+            echo "Docker configured. Use the compose 'deploy.resources.reservations.devices' GPU syntax."
+        else
+            echo "Docker is not installed yet — its NVIDIA runtime will be configured"
+            echo "  when you run: ai-studio-cli setup vllm"
+        fi
+    fi
+    echo ""
 }
 
 # -----------------------------
@@ -373,6 +470,10 @@ if [ "$PHASE" == "--phase1" ]; then
             echo "Driver install complete. Module loaded and verified."
         fi
     fi
+
+    # Configure GPU access for the chosen container runtime(s). Done here,
+    # after the driver is confirmed loaded, so CDI generation can succeed.
+    setup_container_runtime
 
     # Persist CUDA on PATH
     if [ ! -d "$CUDA_PATH" ]; then

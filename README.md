@@ -40,6 +40,29 @@ ai-studio-cli setup dependencies
 
 > If the installation of drivers occurs, the system reboots at the end of Phase 1.
 
+**Choosing a container runtime (Docker / Podman)**
+
+Phase 1 installs the NVIDIA Container Toolkit and configures GPU access for the
+container runtime of your choice. Select it with `--runtime`:
+
+```bash
+# Docker (default) — configures the NVIDIA container runtime
+ai-studio-cli setup dependencies --runtime docker
+
+# Podman — generates a CDI spec (/etc/cdi/nvidia.yaml) and installs podman
+ai-studio-cli setup dependencies --runtime podman
+
+# Both
+ai-studio-cli setup dependencies --runtime both
+```
+
+The toolkit package is identical for both; only the access mechanism differs —
+Docker uses the NVIDIA container runtime, while Podman uses the Container Device
+Interface (CDI). With Podman, run GPU containers via
+`podman run --device nvidia.com/gpu=all ...`. The CDI spec is regenerated
+automatically after driver updates/reboots when the `nvidia-cdi-refresh`
+service is available (NVIDIA Container Toolkit ≥ 1.18).
+
 **Phase 2 — Build nvbandwidth**
 
 Run this to verify drivers, clone `nvbandwidth` from GitHub, and compile it.
@@ -50,10 +73,17 @@ ai-studio-cli setup nvbandwidth
 
 **Phase 3 — Install vLLM Dependencies (Optional)**
 
-If you intend to run inference benchmarks using the Docker fallback strategy, you must install Docker Engine and the NVIDIA Container Toolkit.
+If you intend to run inference benchmarks using the container fallback strategy, you must install a container runtime and the NVIDIA Container Toolkit. Choose the runtime with `--runtime` (default `docker`):
 
 ```bash
+# Docker (default)
 ai-studio-cli setup vllm
+
+# Podman — installs podman + podman-compose and generates a CDI spec
+ai-studio-cli setup vllm --runtime podman
+
+# Both
+ai-studio-cli setup vllm --runtime both
 ```
 
 ---
@@ -114,7 +144,7 @@ The `bench` subcommand provides an automated way for testing LLM serving perform
 
 ### Quick Start — Zero-Config Benchmark
 
-The CLI comes bundled with a default, optimized `docker-compose.yaml` (configured for `Qwen2.5-32B-Instruct` with FP8 and PP-4 and TP-1). If you don't provide a compose file, it will use this default automatically:
+The CLI comes bundled with a default, optimized compose file (configured for `Qwen2.5-32B-Instruct` with FP8 and PP-4 and TP-1). If you don't provide a compose file, it will use this default automatically:
 
 ```bash
 # Simplest case — uses the built-in default compose
@@ -123,6 +153,17 @@ ai-studio-cli bench --requests 200 --concurrency 20 --max-tokens 1024
 # With Apache Bench
 ai-studio-cli ab-bench --requests 200 --concurrency 20 --max-tokens 1024
 ```
+
+#### Container runtime (Docker or Podman)
+
+The `bench`, `ab-bench`, and `vllm` commands work with either runtime. By default the runtime is **auto-detected** (Docker preferred, then Podman); override it with `--runtime`:
+
+```bash
+# Force Podman — uses podman-compose and CDI device passthrough
+ai-studio-cli bench --runtime podman --requests 200 --concurrency 20
+```
+
+Under Podman the bundled compose file is automatically adapted (the GPU `deploy.resources` reservation is rewritten to the CDI `devices: [nvidia.com/gpu=all]` form, which `podman-compose` understands). If you supply your *own* `--compose-file` for Podman, use the CDI device syntax yourself.
 
 To keep the server running after the benchmark (e.g., for follow-up runs):
 ```bash
@@ -140,7 +181,7 @@ ai-studio-cli bench --compose-file docker-compose.yaml --requests 200 --concurre
 
 ### Prerequisites (One-Time Setup)
 
-Before running benchmarks with the built-in vLLM server, ensure you have **Docker Engine** and the **NVIDIA Container Toolkit** installed on your system. 
+Before running benchmarks with the built-in vLLM server, ensure you have a container runtime (**Docker Engine** or **Podman** + `podman-compose`) and the **NVIDIA Container Toolkit** installed. Run `ai-studio-cli setup vllm --runtime <docker|podman|both>` to install them. 
 
 ### Manual Server Management
 
@@ -192,7 +233,7 @@ ai-studio-cli bench --endpoint http://<ip>:<port> --dataset sharegpt --dataset-p
 
 The benchmarking tool automatically determines the best way to run the test:
 1. **Local Execution**: If `vllm` is installed locally in your Python environment (e.g., via `pip install vllm`), it will run the benchmark natively to avoid overhead.
-2. **Docker Fallback**: If `vllm` is missing (common on fresh nodes), it automatically falls back to pulling and running the `vllm/vllm-openai:latest` Docker image. The Docker container uses host networking to reach your inference server.
+2. **Container Fallback**: If `vllm` is missing (common on fresh nodes), it automatically falls back to pulling and running the `vllm/vllm-openai:latest` image with the active runtime (Docker or Podman, per `--runtime`). The benchmark client container uses host networking to reach your inference server (no GPU is requested — the client is a plain load generator).
 
 ### Auto-Detection & Structured Results
 

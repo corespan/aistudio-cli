@@ -12,7 +12,7 @@ func serverLifecycle(composeFile, endpoint string, timeoutSec int, keepServer bo
 	if effectiveCompose == "" {
 		if !isVLLMReachable(endpoint) {
 			fmt.Println("No --compose-file provided and server is unreachable.")
-			fmt.Println("Starting vLLM using bundled default docker-compose.yaml...")
+			fmt.Printf("Starting vLLM using bundled default compose file (%s runtime)...\n", currentEngine().cli())
 			path, cleanup, err := generateComposeFile()
 			if err != nil {
 				return "", nil, fmt.Errorf("extracting default compose file: %w", err)

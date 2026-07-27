@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -24,13 +23,13 @@ var (
 
 var vllmCmd = &cobra.Command{
 	Use:   "vllm",
-	Short: "Manage the vLLM Docker Compose environment",
+	Short: "Manage the vLLM compose environment (Docker or Podman)",
 }
 
 var vllmUpCmd = &cobra.Command{
 	Use:   "up",
 	Short: "Start the vLLM stack and wait for it to be ready",
-	Long: `Starts the vLLM Docker Compose stack and waits for the model to load.
+	Long: `Starts the vLLM compose stack (Docker or Podman) and waits for the model to load.
 
 If --compose-file is not provided, the bundled default docker-compose.yaml is used.
 The command polls the /v1/models endpoint until the server is ready or the timeout
@@ -81,7 +80,7 @@ var vllmStatusCmd = &cobra.Command{
 }
 
 func runVllmStatus(file, endpoint string) error {
-	c := exec.Command("docker", composeArgsForFile(file, "ps")...)
+	c := currentEngine().composeCommand(file, "ps")
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	_ = c.Run()
@@ -122,8 +121,7 @@ var vllmLogsCmd = &cobra.Command{
 		}
 		extra = append(extra, service)
 
-		argsList := composeArgsForFile(file, extra...)
-		c := exec.Command("docker", argsList...)
+		c := currentEngine().composeCommand(file, extra...)
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		return c.Run()
@@ -131,8 +129,9 @@ var vllmLogsCmd = &cobra.Command{
 }
 
 func init() {
-	vllmCmd.PersistentFlags().StringVar(&composeFile, "compose-file", "", "Path to docker-compose.yml; uses bundled default when omitted")
+	vllmCmd.PersistentFlags().StringVar(&composeFile, "compose-file", "", "Path to a compose file; uses bundled default when omitted")
 	vllmCmd.PersistentFlags().StringVar(&vllmEndpoint, "endpoint", "http://localhost:8010", "vLLM service API base URL")
+	vllmCmd.PersistentFlags().StringVar(&containerRuntime, "runtime", "auto", "Container engine: auto, docker, or podman")
 
 	// 900s (15 min) default - It takes time to load model weights.
 	vllmUpCmd.Flags().IntVar(&upTimeoutSec, "timeout", 900, "Maximum seconds to wait for model initialisation")
@@ -159,21 +158,15 @@ func resolveComposeFile() (string, func()) {
 	return "", func() {}
 }
 
-// composeArgsForFile builds docker compose arguments using an explicit compose file.
-func composeArgsForFile(file string, args ...string) []string {
-	base := []string{"compose"}
-	if file != "" {
-		base = append(base, "-f", file)
-	}
-	return append(base, args...)
-}
-
 // composeUp starts the compose stack and waits for the vLLM endpoint to become ready.
 func composeUp(file, endpoint string, timeoutSec int) error {
-	argsList := composeArgsForFile(file, "up", "-d")
+	e := currentEngine()
+	if ok, msg := e.composeAvailable(); !ok {
+		return fmt.Errorf("%s", msg)
+	}
 
-	fmt.Printf("Executing: docker %s\n", strings.Join(argsList, " "))
-	c := exec.Command("docker", argsList...)
+	fmt.Printf("Executing: %s\n", e.composeDisplay(file, "up", "-d"))
+	c := e.composeCommand(file, "up", "-d")
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	if err := c.Run(); err != nil {
@@ -191,9 +184,9 @@ func composeUp(file, endpoint string, timeoutSec int) error {
 
 // composeDown tears down the compose stack.
 func composeDown(file string) error {
-	argsList := composeArgsForFile(file, "down")
-	fmt.Printf("Executing: docker %s\n", strings.Join(argsList, " "))
-	c := exec.Command("docker", argsList...)
+	e := currentEngine()
+	fmt.Printf("Executing: %s\n", e.composeDisplay(file, "down"))
+	c := e.composeCommand(file, "down")
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()
@@ -260,8 +253,10 @@ func waitForVLLMReady(endpoint, composeFile string, timeout time.Duration) error
 
 // checkContainerStillRunning returns an error
 func checkContainerStillRunning(composeFile string) error {
-	args := composeArgsForFile(composeFile, "ps", "--status", "exited", "--status", "restarting", "--quiet")
-	out, err := exec.Command("docker", args...).Output()
+	// Note: podman-compose ps may not support these status filters; on failure
+	// we keep waiting rather than treating it as a crashed container.
+	c := currentEngine().composeCommand(composeFile, "ps", "--status", "exited", "--status", "restarting", "--quiet")
+	out, err := c.Output()
 	if err != nil {
 		// Can't determine status — keep waiting rather than failing
 		return nil
@@ -289,8 +284,8 @@ func printContainerLogs(composeFile string, lines int) {
 
 // captureContainerLogs returns the last n log lines from the compose stack as a string.
 func captureContainerLogs(composeFile string, lines int) string {
-	args := composeArgsForFile(composeFile, "logs", "--tail", fmt.Sprintf("%d", lines))
-	out, err := exec.Command("docker", args...).CombinedOutput()
+	c := currentEngine().composeCommand(composeFile, "logs", "--tail", fmt.Sprintf("%d", lines))
+	out, err := c.CombinedOutput()
 	if err != nil {
 		return fmt.Sprintf("(could not retrieve logs: %v)\n", err)
 	}
