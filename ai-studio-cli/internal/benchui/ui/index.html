@@ -77,6 +77,11 @@
           <span class="metric-value" id="val-tpot">—</span>
           <span class="metric-unit">ms</span>
         </div>
+        <div class="metric-card">
+          <span class="metric-label">Rent vs Buy</span>
+          <span class="metric-value" id="val-verdict">—</span>
+          <span class="metric-unit">at market median</span>
+        </div>
       </section>
 
       <!-- Model Config Bar -->
@@ -135,6 +140,55 @@
               </select>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- Cost Analysis -->
+      <section id="cost-section" class="hidden">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Cost Analysis — Rent vs Buy</h2>
+            <span class="cost-verdict-badge" id="cost-verdict"></span>
+          </div>
+          <div class="cost-kpi-row">
+            <div class="metric-card">
+              <span class="metric-label">Owned (fully-loaded)</span>
+              <span class="metric-value" id="cost-owned">—</span>
+              <span class="metric-unit">USD / window</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Owned Electricity</span>
+              <span class="metric-value" id="cost-energy">—</span>
+              <span class="metric-unit">USD</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Blended (CoreSpan)</span>
+              <span class="metric-value" id="cost-blended">—</span>
+              <span class="metric-unit">USD / 1M tok</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Avg GPU Power</span>
+              <span class="metric-value" id="cost-watts">—</span>
+              <span class="metric-unit">W / GPU</span>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table cost-ladder-table">
+              <thead>
+                <tr>
+                  <th>Rental Tier</th>
+                  <th>$/GPU-hr</th>
+                  <th>Rental Total</th>
+                  <th>Savings vs Buy</th>
+                  <th>Verdict</th>
+                </tr>
+              </thead>
+              <tbody id="cost-ladder-body">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+          <p class="cost-footnote" id="cost-footnote"></p>
         </div>
       </section>
 

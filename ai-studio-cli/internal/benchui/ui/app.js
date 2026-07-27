@@ -37,6 +37,7 @@
     valOutputThroughput: $('#val-output-throughput'),
     valTtft: $('#val-ttft'),
     valTpot: $('#val-tpot'),
+    valVerdict: $('#val-verdict'),
   };
 
   // ----- API -----
@@ -233,6 +234,7 @@
       state.selectedRun = await fetchRunDetail(model, gpu, timestamp, signal);
       renderKPIs();
       renderConfigBar();
+      renderCost();
     } catch (err) {
       if (err.name === 'AbortError') return;
       console.error('Error loading run detail:', err);
@@ -248,6 +250,24 @@
     dom.valOutputThroughput.textContent = fmtNum(r.output_throughput);
     dom.valTtft.textContent = fmtNum(r.mean_ttft_ms);
     dom.valTpot.textContent = fmtNum(r.mean_tpot_ms);
+    renderVerdictKPI();
+  }
+
+  // Rent-vs-buy verdict at the market-median tier, shown in the top KPI row.
+  function renderVerdictKPI() {
+    const r = state.selectedRun;
+    const cm = r && r.cost_metrics;
+    const ladder = cm && cm.rent_vs_buy_analysis;
+    const tiers = ladder && Array.isArray(ladder.tiers) ? ladder.tiers : [];
+    const median = tiers.find(t => t.tier === 'dedicated_median');
+    if (!median) {
+      dom.valVerdict.textContent = '—';
+      dom.valVerdict.style.color = '';
+      return;
+    }
+    const buy = median.verdict === 'buy';
+    dom.valVerdict.textContent = buy ? 'BUY' : 'RENT';
+    dom.valVerdict.style.color = buy ? 'hsl(142, 60%, 55%)' : 'hsl(38, 90%, 60%)';
   }
 
   // ----- Config Bar -----
@@ -276,6 +296,59 @@
     dom.cfgDtype.textContent = (quantLabel && dtypeLabel) ? dtypeLabel : '';
     dom.cfgMaxlen.textContent = mc.max_model_len ? `maxlen ${mc.max_model_len.toLocaleString()}` : '';
     dom.cfgGmem.textContent = mc.gpu_memory_utilization ? `mem ${mc.gpu_memory_utilization}` : '';
+  }
+
+  // ----- Cost Analysis -----
+  function renderCost() {
+    const r = state.selectedRun;
+    const cm = r && r.cost_metrics;
+    const sec = $('#cost-section');
+    if (!sec) return;
+
+    const ladder = cm && cm.rent_vs_buy_analysis;
+    if (!cm || !ladder || !Array.isArray(ladder.tiers) || ladder.tiers.length === 0) {
+      sec.classList.add('hidden');
+      return;
+    }
+    sec.classList.remove('hidden');
+
+    $('#cost-owned').textContent = fmtUSD(ladder.owned_fully_loaded_usd);
+    $('#cost-energy').textContent = fmtUSD(ladder.owned_energy_cost_usd);
+    $('#cost-blended').textContent = cm.corespan_infra
+      ? fmtUSD(cm.corespan_infra.blended_cost_per_1m_tokens_usd, 2)
+      : '—';
+    $('#cost-watts').textContent = fmtNum(cm.avg_gpu_power_watts);
+
+    $('#cost-ladder-body').innerHTML = ladder.tiers.map(t => {
+      const buy = t.verdict === 'buy';
+      const cls = buy ? 'verdict-buy' : 'verdict-rent';
+      const sign = Number(t.savings_usd_vs_buy) >= 0 ? '+' : '−';
+      const mag = fmtUSD(Math.abs(Number(t.savings_usd_vs_buy)));
+      return `<tr>
+        <td>${esc(t.label || t.tier)}</td>
+        <td class="mono">$${fmtNum(t.rental_hourly_usd)}</td>
+        <td class="mono">${fmtUSD(t.rental_total_usd)}</td>
+        <td class="mono ${cls}">${sign}${mag}</td>
+        <td><span class="verdict-chip ${cls}">${buy ? 'BUY' : 'RENT'}</span></td>
+      </tr>`;
+    }).join('');
+
+    const median = ladder.tiers.find(t => t.tier === 'dedicated_median');
+    const vb = $('#cost-verdict');
+    if (median) {
+      const buy = median.verdict === 'buy';
+      vb.textContent = buy ? 'BUY wins at market median' : 'RENT wins at market median';
+      vb.className = 'cost-verdict-badge ' + (buy ? 'verdict-buy' : 'verdict-rent');
+    } else {
+      vb.textContent = '';
+      vb.className = 'cost-verdict-badge';
+    }
+
+    const fn = $('#cost-footnote');
+    if (fn) {
+      const capex = fmtUSD(ladder.owned_capex_only_usd);
+      fn.textContent = `Owned = amortized CapEx (${capex}) + electricity over a ${fmtNum(ladder.window_hours)}h window · ${ladder.effective_num_gpus} GPU(s) · pricing as of ${cm.pricing_source_date || 'n/a'}.`;
+    }
   }
 
   // ----- Chart -----
@@ -459,6 +532,25 @@
     return isNaN(num) ? '—' : num.toFixed(2);
   }
 
+  // fmtUSD formats a dollar amount. Pass `decimals` to force a fixed precision;
+  // otherwise it adapts — whole dollars for large sums, and enough decimals to
+  // reveal sub-cent values (so short-run costs show the real number, not "$0").
+  function fmtUSD(val, decimals) {
+    if (val == null) return '—';
+    const num = Number(val);
+    if (isNaN(num)) return '—';
+    let d = decimals;
+    if (d == null) {
+      const abs = Math.abs(num);
+      if (abs === 0) d = 2;
+      else if (abs >= 1000) d = 0;              // $111,568
+      else if (abs >= 1) d = 2;                 // $25.09
+      // sub-dollar: ~2 significant figures so small costs show the real value
+      else d = Math.min(8, Math.max(2, 1 - Math.floor(Math.log10(abs))));
+    }
+    return '$' + num.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+
   function formatTimestamp(ts) {
     if (!ts) return '—';
     return ts.replace(/T/, ' ').replace(/-(\d{2})-(\d{2})$/, ':$1:$2');
@@ -495,6 +587,40 @@
       background: var(--accent-muted);
       color: var(--accent);
       border: 1px solid var(--border-accent);
+    }
+    #cost-section { margin-top: var(--space-lg, 16px); }
+    .cost-kpi-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: var(--space-md, 12px);
+      margin-bottom: var(--space-lg, 16px);
+    }
+    .cost-ladder-table td { vertical-align: middle; }
+    .verdict-buy { color: hsl(142, 60%, 55%); }
+    .verdict-rent { color: hsl(38, 90%, 60%); }
+    .verdict-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.15em 0.6em;
+      font-size: 0.72rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      border-radius: 999px;
+      border: 1px solid currentColor;
+    }
+    .cost-verdict-badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      padding: 0.2em 0.7em;
+      border-radius: 999px;
+      border: 1px solid currentColor;
+    }
+    .cost-footnote {
+      margin-top: var(--space-md, 12px);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
     }
     .error-toast {
       position: fixed;

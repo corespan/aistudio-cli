@@ -258,6 +258,49 @@ Results are automatically saved to a structured directory in the following forma
 | `--compose-file`| | Custom docker-compose.yml; overrides the built-in default |
 | `--keep-server` | `false` | Leave the vLLM server running after the benchmark |
 | `--server-timeout`| `900` | Seconds to wait for the vLLM server to become ready |
+| `--cost` | `true` | Compute rent-vs-buy cost metrics and embed them in the result JSON |
+| `--system-bundle` | | Named system bundle to price the owned node as an all-in system (e.g. `PRU2500_8x5090`) |
+| `--pue` | *(config default)* | Power Usage Effectiveness for owned-side electricity |
+| `--avg-gpu-watts` | *(sampled)* | Override GPU power draw (W/GPU); `0` samples live via `nvidia-smi` |
+| `--pricing-file` | *(embedded)* | External `hardware_pricing.json` to override the embedded pricing config |
+
+---
+
+### Cost Metrics (Rent vs Buy)
+
+When `--cost` is enabled (default), each benchmark run is enriched with a `cost_metrics`
+block in `benchmark_result.json` and surfaced in the dashboard. It answers "is it cheaper
+to own the CoreSpan node or rent equivalent GPUs?" using the run's real duration, token
+counts, GPU count (TP×PP), and GPU power.
+
+**Owned cost is fully loaded** — amortized hardware CapEx **plus electricity** (PUE-adjusted,
+US industrial rate) — so it is a fair comparison against rental rates, which already bundle power.
+
+- **Power** is measured live during the run via `nvidia-smi`, scoped to the **GPUs in use**
+  (the busiest `TP×PP` GPUs by draw) so electricity stays consistent with the per-GPU CapEx.
+  If sampling is unavailable it falls back to the per-GPU default in the pricing config, or to
+  `--avg-gpu-watts`.
+- **System bundles** contribute a **per-GPU** all-in price scaled by the GPUs the run actually
+  used, so a 4-GPU run (`TP1×PP4`, the default compose) against the 8-GPU `PRU2500_8x5090` bundle
+  prices 4 GPUs — while a full 8-GPU run reproduces the whole-node bundle price exactly.
+- Output includes cost-per-1M-tokens (3:1 output/input weighting) and a rent-vs-buy ladder across
+  market tiers (spot → premium), each with a `buy`/`rent` verdict.
+
+**Supported GPUs** (auto-detected from `nvidia-smi`): RTX 5090, RTX 5070, Tesla T4, A100, H100 —
+each carries a full rent-vs-buy tier ladder (others fall back to `DEFAULT` pricing). The
+RTX 5090 + `PRU2500_8x5090` bundle reproduces the published
+[rent-or-buy blog](https://www.corespan.ai/resources/blog/rent-or-buy-rtx-5090-pru-2500) figures.
+
+```bash
+# Price the owned side as the all-in PRU-2500 + 8x RTX 5090 system
+ai-studio-cli bench --requests 500 --concurrency 32 --system-bundle PRU2500_8x5090
+
+# Use a fixed power figure and a custom pricing file instead of live sampling
+ai-studio-cli bench --avg-gpu-watts 550 --pricing-file ./hardware_pricing.json
+```
+
+> Cost dollars scale with the run window, so a short benchmark shows small amounts; the
+> cost-per-1M-tokens and the buy/rent verdict are the run-scoped signals to read.
 
 ---
 
@@ -275,8 +318,9 @@ ai-studio-cli bench-ui --result-dir /path/to/bench-results
 ```
 
 The dashboard provides:
-- **KPI cards** — Total throughput, output throughput, TTFT, and TPOT at a glance
+- **KPI cards** — Total throughput, output throughput, TTFT, TPOT, and the rent-vs-buy verdict (at the market-median tier) at a glance
 - **Performance trend chart** — Visualise metrics across runs with configurable Y-axis
+- **Cost analysis panel** — Owned (fully-loaded) cost, electricity, blended $/1M tokens, avg GPU power, and the full rent-vs-buy tier ladder with per-tier `buy`/`rent` verdicts
 - **Model config bar** — Shows TP/PP, quantization, dtype, max model length, GPU memory utilization
 - **Filterable table** — Filter by model, GPU, and precision; search across all runs
 - **Sidebar navigation** — Quickly switch between benchmark runs
