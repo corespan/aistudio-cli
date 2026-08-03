@@ -1,0 +1,38 @@
+NOTICES-NOT-GENERATED
+
+This is a placeholder. The real third-party licence inventory has not been
+generated for this checkout yet.
+
+Generate it with:
+
+    make notices
+
+That runs go-licenses over the actual module graph and overwrites this file
+with the licence text of every dependency compiled into the binary. It needs a
+Go toolchain and network access to proxy.golang.org.
+
+CI regenerates and verifies this file on every push, and release builds are
+blocked while this marker is present — a released binary must never ship
+without its notices.
+
+Why this file exists at all
+---------------------------
+
+A Go binary statically links its dependencies. Publishing a release binary
+means distributing compiled copies of cobra, viper, pflag, fsnotify and the
+rest, and MIT, BSD-3 and Apache-2.0 all condition redistribution on carrying
+the copyright notice. There is no node_modules or site-packages next to the
+artifact for those notices to live in — the binary is the whole distribution,
+so the notices have to be inside it.
+
+`ai-studio-cli licenses` prints this file.
+
+Not covered here
+----------------
+
+  * CoreSpan AI's own source — Apache-2.0, see LICENSE and NOTICE in the
+    repository root.
+  * The embedded web UI's fonts and Chart.js — see
+    internal/benchui/ui/vendor/NOTICE. Those are also compiled in via
+    go:embed and their notices are reproduced by `make notices` alongside the
+    Go module licences.
