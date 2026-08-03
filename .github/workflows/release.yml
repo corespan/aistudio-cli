@@ -10,11 +10,12 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "ai-studio-cli-*-opensource"   # e.g. ai-studio-cli-1.2.0-1-opensource
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (must already exist)"
+        description: "Annotated tag to build and release (must already exist)"
         required: true
 
 permissions:
@@ -42,7 +43,8 @@ jobs:
 
       - name: Tag must be annotated
         run: |
-          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-$GITHUB_REF_NAME}"
           type=$(git cat-file -t "$TAG" 2>/dev/null || echo missing)
           if [ "$type" != "tag" ]; then
             echo "::error::'$TAG' is a lightweight tag (type=$type)."
@@ -77,7 +79,8 @@ jobs:
 
       - name: Package
         run: |
-          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-$GITHUB_REF_NAME}"
           mkdir -p dist
           # The tarball carries the notices and licence beside the binary, so
           # they are present even for someone who never runs `licenses`.
@@ -88,7 +91,8 @@ jobs:
 
       - name: Checksums
         run: |
-          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-$GITHUB_REF_NAME}"
           sha256sum "${TAG}.tar.gz" THIRD-PARTY-NOTICES.txt > SHA256SUMS
           cat SHA256SUMS
 
@@ -96,7 +100,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-$GITHUB_REF_NAME}"
           gh release create "$TAG" \
             --title "ai-studio-cli $TAG" \
             --generate-notes \
