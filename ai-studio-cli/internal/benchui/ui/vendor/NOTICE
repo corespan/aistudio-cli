@@ -1,0 +1,31 @@
+Third-party assets embedded in the ai-studio-cli bench UI
+=========================================================
+
+These files are compiled into the ai-studio-cli binary via //go:embed, so
+their licence terms travel with every copy of the binary that is distributed.
+
+Regenerate with: ./scripts/vendor-ui-assets.sh
+
+Inter
+  Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
+  SIL Open Font License 1.1 — fonts/LICENSE-Inter-OFL.txt
+  Packaged via @fontsource/inter@5.3.0
+
+JetBrains Mono
+  Copyright 2020 The JetBrains Mono Project Authors
+  (https://github.com/JetBrains/JetBrainsMono)
+  SIL Open Font License 1.1 — fonts/LICENSE-JetBrainsMono-OFL.txt
+  Packaged via @fontsource/jetbrains-mono@5.3.0
+
+Chart.js 4.4.7
+  Copyright (c) 2014-2024 Chart.js Contributors
+  MIT — js/LICENSE-chartjs.md
+
+OFL-1.1 note: these fonts are redistributed unmodified, under their original
+names, and are not sold on their own, which is what OFL section 2 requires.
+If a font file is ever subsetted or renamed, re-read sections 3 and 4.
+
+MIT note: Chart.js previously lived here as a jsdelivr-fetched copy carrying
+only a banner comment. A banner names the licence; it is not the licence. MIT
+requires "the above copyright notice and this permission notice" to be included,
+so the full text is now shipped in js/LICENSE-chartjs.md.

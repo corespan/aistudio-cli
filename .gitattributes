@@ -1,0 +1,27 @@
+# Line-ending rules.
+#
+# Scoped deliberately to the file types this change introduces, rather than a
+# blanket `* text=auto eol=lf`. Nine of the 33 tracked files (LICENSE, several
+# .go files, both existing workflows) currently carry CRLF; a blanket rule would
+# renormalise all of them the next time anyone touched them, producing a
+# whole-file diff at a moment unrelated to whatever they were actually changing.
+# That mixed state is worth cleaning up, but as its own commit, not as a side
+# effect of this one.
+
+# Shell scripts must be LF. CRLF gives `bad interpreter: /usr/bin/env bash^M`,
+# which is a genuinely confusing way to fail.
+*.sh text eol=lf
+
+# Generated compliance artifacts are written with LF. Without this, a
+# contributor with core.autocrlf=true checks them out as CRLF and the freshness
+# check reports them stale with a diff that looks empty.
+NOTICE              text eol=lf
+THIRD-PARTY-*.md    text eol=lf
+*.css               text eol=lf
+
+# Vendored assets — never normalise. These are embedded into the binary
+# verbatim and any rewriting corrupts them.
+*.woff2 binary
+*.woff  binary
+*.png   binary
+ai-studio-cli/internal/benchui/ui/vendor/js/*.js -text

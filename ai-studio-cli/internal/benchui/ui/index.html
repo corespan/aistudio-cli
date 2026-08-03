@@ -6,12 +6,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="AI Studio CLI — Benchmark Results Dashboard." />
   <title>Benchmarks — AI Studio</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet" />
-  <script src="chart.umd.min.js"></script>
+  <!--
+    Every asset is served from the binary itself. No network requests.
+
+    This UI is compiled in with //go:embed and served on localhost from GPU
+    nodes, which are routinely air-gapped. A Google Fonts <link> here is not a
+    slow load — it is a dashboard rendering in fallback fonts on exactly the
+    machines this tool exists to benchmark. Embedding the UI and then having it
+    phone out for fonts defeats the point of embedding it.
+
+    It is also a privacy matter: requesting fonts from fonts.googleapis.com
+    discloses the operator's IP to a third party. LG München I, 3 O 17493/20
+    (20 Jan 2022) held that to be a GDPR breach absent consent.
+
+    Assets and their licences are vendored by scripts/vendor-ui-assets.sh.
+    Do not reintroduce a CDN reference.
+  -->
+  <link rel="stylesheet" href="vendor/fonts.css" />
+  <script src="vendor/js/chart.umd.js"></script>
   <link rel="stylesheet" href="index.css" />
 </head>
 

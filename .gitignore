@@ -1,0 +1,4 @@
+
+# Build output — the binary is written to bin/, deliberately not the repo
+# root, where its name would collide with the ai-studio-cli/ module directory.
+bin/

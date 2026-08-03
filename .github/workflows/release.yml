@@ -1,0 +1,113 @@
+name: Release
+
+# Publishes a release the installer can actually verify.
+#
+# The previous flow produced a tarball with no checksum, and install.sh
+# downloaded whatever "latest" resolved to and `sudo mv`d it into
+# /usr/local/bin unverified. This publishes SHA256SUMS alongside the binary,
+# and attaches the third-party notices as their own asset so they can be read
+# without running the binary.
+
+on:
+  push:
+    tags:
+      - "ai-studio-cli-*-opensource"   # e.g. ai-studio-cli-1.2.0-1-opensource
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Annotated tag to build and release (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.25"
+  BINARY: ai-studio-cli
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # Annotated tag metadata is needed to verify the tag is not
+          # lightweight — see the check below.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: ai-studio-cli/go.sum
+
+      - name: Tag must be annotated
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-$GITHUB_REF_NAME}"
+          type=$(git cat-file -t "$TAG" 2>/dev/null || echo missing)
+          if [ "$type" != "tag" ]; then
+            echo "::error::'$TAG' is a lightweight tag (type=$type)."
+            echo "Lightweight tags carry no author, date or signature, and can be"
+            echo "silently repointed. Re-cut it with: git tag -a -s $TAG -m ..."
+            exit 1
+          fi
+          echo "$TAG is annotated."
+
+      - name: Compliance gate
+        run: make compliance
+
+      - name: Build with generated notices
+        # This is where the placeholder is a hard stop rather than a note.
+        # `build-release` generates the notices, builds, and fails if the
+        # resulting binary cannot print them. A released binary must never ship
+        # without its attribution.
+        run: make build-release
+
+      - name: Verify the binary carries its notices
+        run: |
+          out=$(./bin/${BINARY} licenses)
+          # if/then, not `grep -q ... && { exit 1; }`. The AND-list returns
+          # grep's status, so in the good case (marker absent) it evaluates to 1
+          # — and if it were ever the last command in the step, `bash -e` would
+          # fail the step precisely when nothing was wrong.
+          if grep -q "NOTICES-NOT-GENERATED" <<<"$out"; then
+            echo "::error::refusing to release a binary embedding the placeholder."
+            exit 1
+          fi
+          echo "Notices embedded: $(grep -ci copyright <<<"$out") copyright lines."
+
+      - name: Package
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-$GITHUB_REF_NAME}"
+          mkdir -p dist
+          # The tarball carries the notices and licence beside the binary, so
+          # they are present even for someone who never runs `licenses`.
+          cp LICENSE NOTICE ai-studio-cli/internal/notices/THIRD-PARTY-NOTICES.txt dist/
+          cp "bin/${BINARY}" dist/
+          tar -czf "${TAG}.tar.gz" -C dist .
+          cp ai-studio-cli/internal/notices/THIRD-PARTY-NOTICES.txt .
+
+      - name: Checksums
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-$GITHUB_REF_NAME}"
+          sha256sum "${TAG}.tar.gz" THIRD-PARTY-NOTICES.txt > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-$GITHUB_REF_NAME}"
+          gh release create "$TAG" \
+            --title "ai-studio-cli $TAG" \
+            --generate-notes \
+            --verify-tag \
+            "${TAG}.tar.gz" \
+            THIRD-PARTY-NOTICES.txt \
+            SHA256SUMS \
+          || gh release upload "$TAG" \
+            "${TAG}.tar.gz" THIRD-PARTY-NOTICES.txt SHA256SUMS --clobber
