@@ -295,3 +295,53 @@ The dashboard provides:
 
 - **Sudo Password**: The tool will securely prompt for your sudo password interactively during setup.
 ---
+
+---
+
+## Licensing
+
+CoreSpan AI's source in this repository is licensed **Apache-2.0** — see
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+
+Apache-2.0 Section 6 grants no trademark rights. "CoreSpan" and the CoreSpan
+logo are trademarks of CoreSpan AI.
+
+### Third-party attribution
+
+Go statically links its dependencies, so a released `ai-studio-cli` binary
+contains compiled copies of every module it builds against, plus the web UI
+assets embedded via `go:embed`. Distributing the binary distributes all of it,
+and MIT, BSD-3 and Apache-2.0 all require the copyright notice to travel with a
+distributed copy.
+
+Unlike an interpreted project there is no `node_modules` or `site-packages`
+beside the artifact for those notices to live in — the binary is the whole
+distribution — so they are compiled into it:
+
+```bash
+ai-studio-cli licenses              # everything embedded in this binary
+ai-studio-cli licenses cobra        # filter to one dependency
+```
+
+The same text is published as a release asset, so it can be read without
+running the binary.
+
+### What this tool installs but does not distribute
+
+`ai-studio-cli` provisions NVIDIA drivers, the CUDA userspace, Docker or Podman,
+vLLM and container images onto GPU nodes. CoreSpan does not distribute those —
+they are downloaded by you, from their publishers, onto your machines, under
+their terms. The NVIDIA driver and CUDA EULAs in particular are between you and
+NVIDIA. Nothing in our Apache-2.0 grant extends to them.
+
+### Verifying it yourself
+
+```bash
+make compliance      # licence files, embedded notices, no CDN refs in the UI
+make notices-check   # embedded notices match the real module graph (needs Go)
+make notices         # regenerate them after a dependency change
+make vendor-ui       # re-vendor the bench UI fonts and Chart.js
+```
+
+CI runs all of these plus a build that asserts `ai-studio-cli licenses` prints
+real notices. See [`.github/workflows/compliance.yml`](.github/workflows/compliance.yml).
