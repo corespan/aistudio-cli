@@ -29,7 +29,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Full history, not a shallow clone.
+          #
+          # With fetch-depth: 1 the runner has only the PR head commit and no
+          # base branch, so the action's own `git fetch origin master --depth=1`
+          # had nothing to graft onto and failed with
+          #   "Command failed: git fetch origin master --depth=1"
+          # before the review ever started. A review action has to diff against
+          # the base branch, which means the base branch has to be present.
+          #
+          # 0 = full history. On a repo this size the extra clone cost is
+          # negligible compared to a job that cannot run at all.
+          fetch-depth: 0
 
       - name: Run Claude Code Review
         id: claude-review
