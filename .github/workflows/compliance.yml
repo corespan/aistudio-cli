@@ -128,13 +128,24 @@ jobs:
 
       - name: Bench UI serves no external assets
         run: |
-          # Belt and braces against the Makefile check: assert the strings are
+          # Belt and braces against the Makefile check: assert the reference is
           # absent from the compiled binary, not just from the source tree.
-          if strings ./bin/ai-studio-cli | grep -qE 'fonts\.(googleapis|gstatic)\.com'; then
-            echo "::error::the compiled binary still references Google Fonts."
+          #
+          # Matches a LOADING position (`="https://host`), not any mention of a
+          # hostname. index.html carries a comment explaining why the Google
+          # Fonts links were removed, and that comment names the hostname — it is
+          # embedded verbatim by go:embed, so a bare hostname grep matches our own
+          # documentation and fails the build. It did exactly that on the first
+          # run of this check.
+          #
+          # The `="` prefix is what separates markup from prose: a real
+          # regression looks like `<link href="https://fonts.googleapis.com/...`.
+          if strings ./bin/ai-studio-cli \
+             | grep -nE '=["'"'"']https?://(fonts\.(googleapis|gstatic)\.com|cdn\.|unpkg\.com|cdnjs\.|.*jsdelivr)'; then
+            echo "::error::the compiled binary loads an asset from a third-party origin (above)."
             exit 1
           fi
-          echo "No Google Fonts references in the binary."
+          echo "No third-party asset loads in the binary."
 
       - uses: actions/upload-artifact@v4
         if: always()
