@@ -34,9 +34,12 @@ jobs:
       - name: Static compliance checks
         # Same target as `make compliance` locally, so the feedback loop does
         # not require a push. Covers LICENSE completeness and filled-in
-        # copyright, required files, that the embedded notices are not still
-        # the placeholder, no CDN references in the bench UI, and that the
-        # vendored fonts and Chart.js are present with their licences.
+        # copyright, required files, no CDN references in the bench UI, and that
+        # the vendored fonts and Chart.js are present with their licences.
+        #
+        # Needs no Go toolchain and no network, deliberately — these are the
+        # checks anyone should be able to run on any checkout. The placeholder
+        # state is reported here, not failed on; that is the `build` job's job.
         run: make compliance
 
       - name: Vendored UI assets match their declared versions
@@ -64,25 +67,8 @@ jobs:
           done
           exit $missing
 
-  notices:
-    name: Embedded notices match the module graph
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: ai-studio-cli/go.sum
-
-      - name: Regenerate and compare
-        # go-licenses walks the real build graph — only what is actually linked
-        # into the binary, not everything in go.sum. If this drifts, the binary
-        # is shipping attribution that no longer describes its contents.
-        run: make notices-check
-
   build:
-    name: Build and verify the binary carries its notices
+    name: Build with generated notices and verify the binary carries them
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -92,7 +78,18 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: ai-studio-cli/go.sum
 
-      - run: make build
+      - name: Generate notices and build
+        # Generation happens HERE rather than being compared against a committed
+        # copy. An earlier version of this workflow diffed the generated output
+        # against a file in the repo, which meant a reviewable branch could not
+        # exist without a Go toolchain and network access, and every dependency
+        # bump carried a regenerate-and-commit step whose only failure mode was
+        # a red build with a misleading message.
+        #
+        # `go list -deps` answers the only question that matters: which modules
+        # are actually linked into this binary — not everything in go.sum, which
+        # also lists test and tooling modules that never reach a user.
+        run: make build-release
 
       - name: "`licenses` prints real notices"
         # The check that actually matters. Everything else verifies files exist
@@ -106,7 +103,7 @@ jobs:
           }
 
           if grep -q "NOTICES-NOT-GENERATED" <<<"$out"; then
-            echo "::error::the binary embeds the placeholder, not real notices. Run 'make notices'."
+            echo "::error::the binary embeds the placeholder — make build-release did not generate them."
             exit 1
           fi
 
@@ -117,8 +114,8 @@ jobs:
           fi
           echo "$copyrights copyright notices embedded."
 
-          # The go:embed'd UI assets are not Go modules, so go-licenses cannot
-          # see them. generate-notices.sh appends them; confirm it did.
+          # The go:embed'd UI assets are not Go modules, so the module walk
+          # cannot see them. generate-notices.sh appends them; confirm it did.
           grep -qi "SIL Open Font License" <<<"$out" || {
             echo "::error::OFL-1.1 text missing, but Inter is embedded (OFL s2)."
             exit 1

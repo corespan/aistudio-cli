@@ -39,17 +39,27 @@ See https://github.com/corespan/aistudio-cli for the LICENSE and NOTICE files.`,
 		text := notices.Text()
 
 		if strings.TrimSpace(text) == "" || notices.IsPlaceholder() {
-			// Better to say so than to print an empty page and let the user
-			// conclude there are no third-party dependencies.
+			// Better to say so than to print an empty page and let the reader
+			// conclude this software has no third-party dependencies.
+			//
+			// Two different situations produce this, and the message has to
+			// serve both: a developer's own `make build` (expected, harmless)
+			// and a released binary (a packaging fault that must not happen,
+			// and which the release workflow is set up to prevent).
 			fmt.Fprintln(os.Stderr,
-				"This binary was built without its licence notices generated.")
-			fmt.Fprintln(os.Stderr,
-				"That is a packaging fault — please report it at")
-			fmt.Fprintln(os.Stderr,
-				"https://github.com/corespan/aistudio-cli/issues")
+				"This binary was built without its third-party licence notices.")
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr,
-				"Building from source? Run `make notices` before `go build`.")
+				"If you built it yourself, that is expected — the notices are")
+			fmt.Fprintln(os.Stderr,
+				"generated rather than committed. Build with them included:")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "    make build-release")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr,
+				"If this is a released binary, it is a packaging fault. Please report it:")
+			fmt.Fprintln(os.Stderr,
+				"https://github.com/corespan/aistudio-cli/issues")
 			return fmt.Errorf("licence notices not embedded in this build")
 		}
 

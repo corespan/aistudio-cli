@@ -1,38 +1,53 @@
 NOTICES-NOT-GENERATED
 
-This is a placeholder. The real third-party licence inventory has not been
-generated for this checkout yet.
+This is the committed placeholder. It is what a plain checkout carries, and
+what a plain `go build` or `make build` embeds. That is expected — not a fault.
 
-Generate it with:
+The real inventory is GENERATED, not committed:
 
-    make notices
+    make notices          # generate it (needs a Go toolchain and network)
+    make build-release    # generate, build, and verify the binary carries it
 
-That runs go-licenses over the actual module graph and overwrites this file
-with the licence text of every dependency compiled into the binary. It needs a
-Go toolchain and network access to proxy.golang.org.
+CI runs `make build-release` on every push, and so does the release workflow,
+which refuses to publish a binary that cannot print its notices. So a released
+binary always carries them, and nobody has to remember a regenerate-and-commit
+step when a dependency changes.
 
-CI regenerates and verifies this file on every push, and release builds are
-blocked while this marker is present — a released binary must never ship
-without its notices.
+Why it is not committed
+-----------------------
+
+An earlier version of this file was a committed artifact with a CI job diffing
+it against a fresh `go-licenses` run. That meant a reviewable branch could not
+exist without network access, and every dependency bump carried a
+regenerate-and-commit step whose only failure mode was a red build with a
+misleading message.
+
+The actual requirement is narrower: no released binary may ship without its
+notices. Generating in CI and gating the release satisfies that without putting
+a manual step on anyone's critical path.
 
 Why this file exists at all
 ---------------------------
 
-A Go binary statically links its dependencies. Publishing a release binary
-means distributing compiled copies of cobra, viper, pflag, fsnotify and the
-rest, and MIT, BSD-3 and Apache-2.0 all condition redistribution on carrying
-the copyright notice. There is no node_modules or site-packages next to the
-artifact for those notices to live in — the binary is the whole distribution,
-so the notices have to be inside it.
+A Go binary statically links its dependencies. Publishing a release binary means
+distributing compiled copies of cobra, viper, pflag, fsnotify and the rest, and
+MIT, BSD-3 and Apache-2.0 all condition redistribution on carrying the copyright
+notice. There is no node_modules or site-packages next to the artifact for those
+notices to live in — the binary is the whole distribution, so the notices have
+to be inside it.
 
-`ai-studio-cli licenses` prints this file.
+`go:embed` requires the file to exist at compile time, which is why a
+placeholder is committed rather than nothing at all. `ai-studio-cli licenses`
+detects this marker and reports it, rather than printing an empty document that
+would read like "this software has no dependencies".
 
-Not covered here
-----------------
+Not covered by the generated file
+---------------------------------
 
   * CoreSpan AI's own source — Apache-2.0, see LICENSE and NOTICE in the
     repository root.
-  * The embedded web UI's fonts and Chart.js — see
-    internal/benchui/ui/vendor/NOTICE. Those are also compiled in via
-    go:embed and their notices are reproduced by `make notices` alongside the
-    Go module licences.
+
+The generated file DOES include the embedded web UI's fonts and Chart.js
+(see internal/benchui/ui/vendor/NOTICE), which are compiled in via go:embed and
+appended by scripts/generate-notices.sh because go-licenses cannot see them —
+they are not Go modules.

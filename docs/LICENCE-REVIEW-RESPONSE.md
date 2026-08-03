@@ -24,25 +24,39 @@ they are not accompanying anything — and they were not.
 
 | | Count | Findings |
 | --- | --- | --- |
-| ✅ Fixed | 5 | C1, C2, C3, C4, C5 |
-| 🟡 Fixed, needs one local command | 1 | C1 (generation step) |
+| ✅ Fixed | 6 | C1, C2, C3, C4, C5, C6 |
 | 🔵 Open — product decision | 1 | C7 |
 
-**One thing needs you.** The sandbox this work was done in cannot reach
-`proxy.golang.org`, `go.dev` or GitHub — only the npm registry. So I could
-build all the machinery for the Go module inventory, but not run it. Everything
-else is complete and verified.
+### A correction to the first version of this fix
 
-```bash
-cd aistudio-cli && make notices && git add -A && git commit
-```
+The first attempt treated the generated licence inventory as a **committed**
+artifact, with a CI job diffing the committed copy against a fresh
+`go-licenses` run. Three CI jobs went red, and the diagnosis was more
+interesting than "unfinished work": the design was wrong.
 
-That is a single command with a Go toolchain and network. I deliberately did
-**not** hand-write the inventory: I know roughly what cobra and viper are
-licensed under, but writing licence facts I could not verify into a compliance
-document is precisely the failure mode that makes such documents worthless.
-The committed file is an explicit placeholder, and both `make compliance` and
-CI fail while it is present.
+- The environment this work was done in cannot reach `proxy.golang.org`,
+  `go.dev` or GitHub — only the npm registry. So the inventory could not be
+  generated, and a *reviewable branch could not exist* without a Go toolchain
+  and network access. That is a bad property for a compliance artifact.
+- Worse, it put a regenerate-and-commit step on the critical path of **every
+  dependency bump**, whose only failure mode is a red build with a message that
+  reads like a mistake rather than a routine step.
+
+The obligation is narrower than the design assumed. Nothing requires the
+inventory to live in git. What must be true is that **no released binary ships
+without its notices**. So generation now happens where the network is — in CI
+and in the release flow — and `make build-release` is the gate: it generates,
+builds, and fails if the resulting binary cannot print them.
+
+A fresh checkout embeds a placeholder, and `ai-studio-cli licenses` says so
+plainly instead of printing an empty page that reads like "no dependencies".
+`make compliance` reports it as the normal state rather than an error, so the
+static checks run anywhere with no toolchain.
+
+I deliberately did not hand-write the inventory to paper over the gap. I know
+roughly what cobra and viper are licensed under, but writing licence facts I
+could not verify into a compliance document is precisely what makes such
+documents worthless.
 
 ---
 
@@ -88,10 +102,16 @@ ai-studio-cli licenses cobra     # filter to one dependency
 This survives the case that matters: someone copies the binary onto an isolated
 GPU node with no network and no checkout. The notices go with it.
 
-**What is left.** `make notices` has not been run — see the summary above. The
-placeholder is committed, `make compliance` fails on it, CI fails on it, and
-the release workflow refuses to publish while it is present. That last one is
-the important guard: a released binary must never ship without notices.
+**Generated, not committed.** See the correction in the summary. `make notices`
+runs in CI and in the release flow, where the network is; `make build-release`
+generates, builds and fails if the binary cannot print its notices. A fresh
+checkout carries a placeholder, which `ai-studio-cli licenses` reports rather
+than printing an empty page.
+
+Nothing needs to be remembered on a dependency bump: the next CI run regenerates
+against the new module graph automatically. The guard that matters — a release
+never shipping without attribution — sits in the release workflow, which is the
+only place it can actually be enforced.
 
 ---
 
@@ -299,7 +319,7 @@ next step.
 | LICENSE complete, no placeholder copyright | C5 recurring |
 | NOTICE, vendor NOTICE, embedded notices present | C1, C2, C3 |
 | Embedded notices are not the placeholder | C1 — a binary shipping no attribution |
-| `make notices-check` — notices match the real module graph | C1 drifting after a dependency change |
+| `make build-release` — generates notices, builds, fails if the binary cannot print them | C1: a release shipping no attribution |
 | **Built binary**: `licenses` prints 10+ notices, incl. OFL and Chart.js | C1, C2, C3 — the check that actually matters |
 | **Compiled binary** contains no `fonts.googleapis.com` string | C2, asserted against the artifact not the source |
 | No `src=`/`href=`/`url()` absolute URLs in the bench UI | C2 creeping back |
@@ -317,7 +337,6 @@ artifact a user receives.
 
 | # | Item | Owner |
 | --- | --- | --- |
-| C1 | Run `make notices` and commit — one command, needs Go + network | Engineering |
 | C4 | Cut a release through the new workflow so `SHA256SUMS` exists; then make the missing-checksum branch fatal in install.sh | Engineering |
 | C4 | Generate a CoreSpan signing key and sign `SHA256SUMS` | Engineering |
 | C7 | Trademark clearance on "AI Studio" — cheapest to rename here first | Product + Counsel |

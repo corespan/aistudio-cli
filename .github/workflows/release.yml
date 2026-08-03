@@ -53,14 +53,14 @@ jobs:
           echo "$TAG is annotated."
 
       - name: Compliance gate
-        # A release binary must never ship without its notices. This is the
-        # one place where the placeholder is a hard stop rather than a warning.
-        run: |
-          make compliance
-          make notices-check
+        run: make compliance
 
-      - name: Build
-        run: make build
+      - name: Build with generated notices
+        # This is where the placeholder is a hard stop rather than a note.
+        # `build-release` generates the notices, builds, and fails if the
+        # resulting binary cannot print them. A released binary must never ship
+        # without its attribution.
+        run: make build-release
 
       - name: Verify the binary carries its notices
         run: |

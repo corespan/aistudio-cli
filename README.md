@@ -337,11 +337,17 @@ NVIDIA. Nothing in our Apache-2.0 grant extends to them.
 ### Verifying it yourself
 
 ```bash
-make compliance      # licence files, embedded notices, no CDN refs in the UI
-make notices-check   # embedded notices match the real module graph (needs Go)
-make notices         # regenerate them after a dependency change
+make compliance      # licence files, no CDN refs in the UI (no network needed)
+make notices         # generate the third-party notices (needs Go + network)
+make build-release   # generate notices, build, and verify the binary carries them
 make vendor-ui       # re-vendor the bench UI fonts and Chart.js
 ```
 
-CI runs all of these plus a build that asserts `ai-studio-cli licenses` prints
-real notices. See [`.github/workflows/compliance.yml`](.github/workflows/compliance.yml).
+The notices are **generated, not committed**. A fresh checkout embeds a
+placeholder, and `ai-studio-cli licenses` says so rather than printing an empty
+page. CI and the release workflow run `make build-release`, which generates them
+and fails if the resulting binary cannot print them — so no released binary can
+ship without its attribution, and nobody has to remember a regenerate-and-commit
+step on every dependency bump.
+
+See [`.github/workflows/compliance.yml`](.github/workflows/compliance.yml).
