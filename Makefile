@@ -1,13 +1,27 @@
 MODULE_DIR := ai-studio-cli
 BINARY     := ai-studio-cli
 
+# Build into bin/, NOT the repo root.
+#
+# The module lives in a directory with the same name as the binary, so
+# `go build -o ../ai-studio-cli` from inside it resolves to the module directory
+# itself. `-o` pointing at an existing directory makes Go write the executable
+# *inside* it — so the binary landed at ai-studio-cli/ai-studio-cli, and
+# `./ai-studio-cli` at the repo root was still the directory. Running it gave
+# "Is a directory", exit 126, which make reports as exit 2. That was the real
+# cause of the CI build job failing, not the licence notices.
+BIN_DIR     := bin
+BINARY_PATH := $(BIN_DIR)/$(BINARY)
+
 .PHONY: build build-release run test fmt vet notices vendor-ui compliance clean
 
 # ── Build ────────────────────────────────────────────────────────────────────
 
 build:
-	cd $(MODULE_DIR) && go build -o ../$(BINARY) .
-	@echo "Built ./$(BINARY)"
+	@mkdir -p $(BIN_DIR)
+	cd $(MODULE_DIR) && go build -o ../$(BINARY_PATH) .
+	@echo "Built ./$(BINARY_PATH)"
+	@test -f $(BINARY_PATH) || (echo "FAIL: $(BINARY_PATH) is not a regular file" && exit 1)
 
 run:
 	cd $(MODULE_DIR) && go run .
@@ -55,11 +69,11 @@ build-release:
 	$(MAKE) notices
 	$(MAKE) build
 	@echo
-	@./$(BINARY) licenses > /dev/null 2>&1 \
+	@./$(BINARY_PATH) licenses > /dev/null 2>&1 \
 		|| (echo "FAIL: the built binary cannot print its notices." \
 		    && echo "      Expected 'make notices' to have replaced the placeholder." \
 		    && exit 1)
-	@echo "Built ./$(BINARY) with $$(./$(BINARY) licenses | grep -ci copyright) embedded copyright notices."
+	@echo "Built ./$(BINARY_PATH) with $$(./$(BINARY_PATH) licenses | grep -ci copyright) embedded copyright notices."
 
 vendor-ui:
 	@# Fonts and Chart.js for the embedded bench UI. Committed, not fetched at
@@ -127,5 +141,5 @@ compliance:
 	@echo "Release gate (needs network + Go): 'make build-release'."
 
 clean:
-	rm -f $(BINARY)
+	rm -rf $(BIN_DIR)
 	cd $(MODULE_DIR) && go clean

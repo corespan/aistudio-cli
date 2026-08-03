@@ -64,11 +64,15 @@ jobs:
 
       - name: Verify the binary carries its notices
         run: |
-          out=$(./${BINARY} licenses)
-          grep -q "NOTICES-NOT-GENERATED" <<<"$out" && {
+          out=$(./bin/${BINARY} licenses)
+          # if/then, not `grep -q ... && { exit 1; }`. The AND-list returns
+          # grep's status, so in the good case (marker absent) it evaluates to 1
+          # — and if it were ever the last command in the step, `bash -e` would
+          # fail the step precisely when nothing was wrong.
+          if grep -q "NOTICES-NOT-GENERATED" <<<"$out"; then
             echo "::error::refusing to release a binary embedding the placeholder."
             exit 1
-          }
+          fi
           echo "Notices embedded: $(grep -ci copyright <<<"$out") copyright lines."
 
       - name: Package
@@ -78,7 +82,7 @@ jobs:
           # The tarball carries the notices and licence beside the binary, so
           # they are present even for someone who never runs `licenses`.
           cp LICENSE NOTICE ai-studio-cli/internal/notices/THIRD-PARTY-NOTICES.txt dist/
-          cp "${BINARY}" dist/
+          cp "bin/${BINARY}" dist/
           tar -czf "${TAG}.tar.gz" -C dist .
           cp ai-studio-cli/internal/notices/THIRD-PARTY-NOTICES.txt .
 

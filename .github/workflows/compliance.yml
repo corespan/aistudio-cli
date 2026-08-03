@@ -96,8 +96,8 @@ jobs:
         # in a repository; this verifies the notices are inside the artifact a
         # user receives, which is what the obligation is.
         run: |
-          out=$(./ai-studio-cli licenses 2>&1) || {
-            echo "::error::\`ai-studio-cli licenses\` failed:"
+          out=$(./bin/ai-studio-cli licenses 2>&1) || {
+            echo "::error::\`bin/ai-studio-cli licenses\` failed:"
             echo "$out"
             exit 1
           }
@@ -130,7 +130,7 @@ jobs:
         run: |
           # Belt and braces against the Makefile check: assert the strings are
           # absent from the compiled binary, not just from the source tree.
-          if strings ./ai-studio-cli | grep -qE 'fonts\.(googleapis|gstatic)\.com'; then
+          if strings ./bin/ai-studio-cli | grep -qE 'fonts\.(googleapis|gstatic)\.com'; then
             echo "::error::the compiled binary still references Google Fonts."
             exit 1
           fi

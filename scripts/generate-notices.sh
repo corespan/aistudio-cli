@@ -53,17 +53,36 @@ trap 'rm -rf "$WORK"' EXIT
 
 cd "$MODULE_DIR"
 
-echo "Populating module cache ..."
-go mod download
-
 echo "Resolving the linked module graph ..."
+# NOT preceded by `go mod download`.
+#
+# `go mod download` with no arguments resolves the whole build list, which can
+# include modules that go.sum has no entry for because they are not needed to
+# compile anything. It then fails with "missing go.sum entry" — a job that
+# passes `go build` and `go vet` and fails here, which is exactly what happened
+# on the first run of this workflow.
+#
+# `go list -deps` downloads precisely what it needs to resolve the imports of
+# the main package, which is the set we want anyway.
+#
 # -deps walks everything the main package transitively imports — i.e. what ends
 # up in the binary. Modules only; the standard library has no .Module and is
 # covered by the Go LICENSE, handled separately below.
+#
+# Run into a file with an explicit status check rather than as the head of a
+# pipeline: `set -o pipefail` would surface a go failure as an opaque exit, and
+# `sed`/`sort` would happily produce an empty file from an error.
+if ! go list -deps \
+      -f '{{if .Module}}{{.Module.Path}}|{{.Module.Version}}|{{.Module.Dir}}{{end}}' . \
+      > "$WORK/raw.txt" 2> "$WORK/list.err"; then
+  echo "ERROR: 'go list -deps' failed:" >&2
+  cat "$WORK/list.err" >&2
+  exit 1
+fi
+
 # `sed '/^$/d'` rather than `grep -v '^$'`: grep exits 1 when it filters
-# everything out, and under `set -o pipefail` that would fail the pipeline.
-go list -deps -f '{{if .Module}}{{.Module.Path}}|{{.Module.Version}}|{{.Module.Dir}}{{end}}' . \
-  | sed '/^$/d' | sort -u > "$WORK/modules.txt"
+# everything out, which under pipefail would fail the pipeline.
+sed '/^$/d' "$WORK/raw.txt" | sort -u > "$WORK/modules.txt"
 
 # Drop our own module — its licence is LICENSE/NOTICE in the repo root.
 SELF="$(go list -m)"
@@ -72,6 +91,17 @@ grep -v "^${SELF}|" "$WORK/modules.txt" > "$WORK/deps.txt" || true
 COUNT=$(wc -l < "$WORK/deps.txt")
 [ "$COUNT" -gt 0 ] || { echo "ERROR: resolved no dependencies — refusing to write empty notices." >&2; exit 1; }
 echo "  $COUNT modules linked into the binary."
+
+# A module resolved but not present on disk yields an empty .Module.Dir, and
+# every licence file for it would then be silently absent. Fail loudly instead:
+# quietly attributing nothing is the failure this whole script exists to prevent.
+NODIR=$(awk -F'|' '$3 == "" { print "  " $1 "@" $2 }' "$WORK/deps.txt")
+if [ -n "$NODIR" ]; then
+  echo "ERROR: these modules resolved with no on-disk directory:" >&2
+  echo "$NODIR" >&2
+  echo "Their licence files cannot be read. Try 'go mod download <module>'." >&2
+  exit 1
+fi
 
 # Licence filenames as they appear in the wild.
 find_licence_files() {
