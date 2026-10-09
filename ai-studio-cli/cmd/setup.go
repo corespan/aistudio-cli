@@ -50,6 +50,29 @@ var setupNVBandwidthCmd = &cobra.Command{
 	},
 }
 
+var setupTransferBenchRef string
+
+var setupTransferBenchCmd = &cobra.Command{
+	Use:   "transferbench",
+	Short: "Build and install AMD TransferBench (ROCm nodes)",
+	Long: `Builds AMD TransferBench, the ROCm counterpart to nvbandwidth:
+- Checks the amdgpu driver (/dev/kfd) and ROCm (default /opt/rocm) are present
+- Installs build dependencies (git, make, libnuma-dev)
+- Clones TransferBench (https://github.com/ROCm/TransferBench) at --ref
+- Compiles it for the GPUs in this node
+- Moves the binary to the ai-studio-cli directory
+
+The amdgpu driver and ROCm must already be installed: 'setup dependencies'
+provisions NVIDIA nodes only.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := prepareProvisioner()
+		if err != nil {
+			return err
+		}
+		return p.SetupTransferBench(setupTransferBenchRef)
+	},
+}
+
 var setupVLLMRuntime string
 
 var setupVLLMCmd = &cobra.Command{
@@ -97,9 +120,12 @@ func init() {
 		"GPU container runtime to configure: docker, podman, or both")
 	setupVLLMCmd.Flags().StringVar(&setupVLLMRuntime, "runtime", "docker",
 		"Container runtime to install for vLLM: docker, podman, or both")
+	setupTransferBenchCmd.Flags().StringVar(&setupTransferBenchRef, "ref", provision.DefaultTransferBenchRef,
+		"TransferBench git tag or branch to build")
 
 	setupCmd.AddCommand(setupDependenciesCmd)
 	setupCmd.AddCommand(setupNVBandwidthCmd)
+	setupCmd.AddCommand(setupTransferBenchCmd)
 	setupCmd.AddCommand(setupVLLMCmd)
 	rootCmd.AddCommand(setupCmd)
 }

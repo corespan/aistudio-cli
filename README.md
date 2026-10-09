@@ -1,6 +1,6 @@
 # ai-studio-cli
 
-A command-line tool for node provisioning (CUDA toolkit, Nvidia recommended drivers, libraries) and GPU bandwidth benchmarking via `nvbandwidth`. See https://github.com/NVIDIA/nvbandwidth.
+A command-line tool for node provisioning (CUDA toolkit, Nvidia recommended drivers, libraries) and GPU bandwidth benchmarking via `nvbandwidth` on NVIDIA (https://github.com/NVIDIA/nvbandwidth) and `TransferBench` on AMD / ROCm (https://github.com/ROCm/TransferBench).
 
 Supports all major NVIDIA GPU architectures including the **CoreSpan 5090 Inference System** (Blackwell / RTX 5090, GB202). The provisioning script automatically detects the RTX 5090, selects CUDA 12.8, and installs driver 570+.
 
@@ -71,6 +71,17 @@ Run this to verify drivers, clone `nvbandwidth` from GitHub, and compile it.
 ai-studio-cli setup nvbandwidth
 ```
 
+**AMD / ROCm nodes — Build TransferBench**
+
+On AMD Instinct nodes, build TransferBench instead of nvbandwidth. Phase 1 provisions NVIDIA nodes only, so the amdgpu driver and ROCm must already be installed ([ROCm install guide](https://rocm.docs.amd.com/projects/install-on-linux/)).
+
+```bash
+ai-studio-cli setup transferbench                 # pinned release (v1.70.02)
+ai-studio-cli setup transferbench --ref develop   # or any tag / branch
+```
+
+This checks for `/dev/kfd` and a HIP compiler under `/opt/rocm`, installs `git`, `make` and `libnuma-dev`, compiles TransferBench for the GPUs in the node, and puts the binary beside `ai-studio-cli`. A `TransferBench` already on `PATH` or in `$ROCM_PATH/bin` is also picked up.
+
 **Phase 3 — Install vLLM Dependencies (Optional)**
 
 If you intend to run inference benchmarks using the container fallback strategy, you must install a container runtime and the NVIDIA Container Toolkit. Choose the runtime with `--runtime` (default `docker`):
@@ -135,6 +146,76 @@ ai-studio-cli nvbandwidth nvlink --buffer-size 1024 --samples 10
 ```
 
 The same flags as `run` and `test` apply.
+
+---
+
+## GPU Bandwidth Benchmarking — AMD (TransferBench)
+
+TransferBench is the ROCm counterpart to nvbandwidth: it measures copy bandwidth between host and GPU memory, with the copy done by GPU kernels, DMA engines or CPU threads. Install it first with `setup transferbench` above. `tb` works as a short alias for `transferbench`.
+
+```bash
+# What TransferBench sees: GPUs, CPUs, links
+ai-studio-cli transferbench topology
+
+# List presets, then run one
+ai-studio-cli transferbench list
+ai-studio-cli transferbench run p2p
+
+# Run your own config file (one test per line; Transfers on a line run concurrently)
+ai-studio-cli transferbench run ./transfers.cfg
+
+# One inline test: GPU 0 copies to GPU 1 using 4 CUs (quote it — '>' is a shell redirect)
+ai-studio-cli transferbench test "1 4 (G0->G0->G1)"
+```
+
+### Multi-GPU fabric validation
+
+For PCIe-switch fabrics with 8, 16 or 32 GPUs, three tests matter. Run them in this order:
+
+| Command | What it shows |
+|---|---|
+| `transferbench p2p` | Every GPU pair, one at a time, as a GB/s matrix. A weak row or column is one bad link. A block of weak cells is a shared, oversubscribed link, or ACS left enabled. |
+| `transferbench a2a` | Every GPU sending to every other GPU at once. |
+| `transferbench bisection` | One pair alone, then GPUs 0…N/2-1 sending to N/2…N-1 at the same time. On a non-blocking fabric, per-Transfer bandwidth stays close to the single pair. Pairwise tests can't show this, because one pair never fills a switch uplink. |
+
+```bash
+# All three in sequence (the AMD counterpart to 'nvbandwidth nvlink')
+ai-studio-cli transferbench fabric
+
+# Bisection both ways at once, 1 GiB per Transfer, with DMA engines
+ai-studio-cli transferbench bisection --bidirectional --dma --bytes 1G
+
+# Just print the generated TransferBench config
+ai-studio-cli transferbench bisection --num-gpus 16 --print-config
+```
+
+`bisection` splits GPUs by TransferBench's numbering (see `transferbench topology`). That numbering need not match the physical layout, so check which GPUs sit behind which switch before treating the two halves as separate enclosures. The GPU count is read from the amdgpu driver; partitioned GPUs (DPX/CPX) count once per partition.
+
+#### Flags for `run`, `test`, `p2p`, `a2a`, `bisection` and `fabric`
+
+TransferBench is configured through environment variables, not flags. These flags set the common ones; pass anything else with `--env` (`ai-studio-cli transferbench run envvars` lists them all).
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--bytes` | `-b` | `256M` | Bytes per Transfer. Accepts `K`/`M`/`G` suffixes (binary multiples); `0` sweeps a range of sizes |
+| `--iterations` | `-i` | `10` | Timed iterations (`NUM_ITERATIONS`). A negative value runs for that many seconds |
+| `--warmups` | `-w` | `3` | Warmup iterations (`NUM_WARMUPS`) |
+| `--num-gpus` | `-n` | all | Use only the first N GPUs (`NUM_GPU_DEVICES`) |
+| `--csv` | | | CSV output (`OUTPUT_TO_CSV=1`). TransferBench has no JSON output |
+| `--env` | `-e` | | Any other TransferBench variable as `KEY=VALUE`. Repeatable; overrides the flags above |
+
+Command-specific flags:
+
+| Command | Flag | Description |
+|---|---|---|
+| `p2p`, `fabric` | `--mode uni\|bi\|both` | Directions to measure (default `both`) |
+| `p2p`, `fabric` | `--remote-read` | The destination GPU reads, instead of the source GPU writing |
+| `p2p`, `a2a`, `bisection`, `fabric` | `--dma` | Copy with DMA engines instead of GPU kernels |
+| `a2a` | `--sub-execs` | CUs per Transfer (default 8) |
+| `bisection` | `--sub-execs` | CUs per Transfer (default 8, or 1 DMA queue with `--dma`) |
+| `bisection`, `fabric` | `--bidirectional` | The upper half also sends to the lower half, at the same time |
+| `bisection` | `--print-config` | Print the generated config and exit |
+| `test` | `--dry-run` | Print the parsed Transfers without running them |
 
 ---
 
@@ -329,7 +410,8 @@ running the binary.
 ### What this tool installs but does not distribute
 
 `ai-studio-cli` provisions NVIDIA drivers, the CUDA userspace, Docker or Podman,
-vLLM and container images onto GPU nodes. CoreSpan does not distribute those —
+vLLM and container images onto GPU nodes, and builds nvbandwidth and AMD
+TransferBench (MIT) from their publishers' sources. CoreSpan does not distribute those —
 they are downloaded by you, from their publishers, onto your machines, under
 their terms. The NVIDIA driver and CUDA EULAs in particular are between you and
 NVIDIA. Nothing in our Apache-2.0 grant extends to them.

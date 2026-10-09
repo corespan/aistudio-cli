@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -16,7 +17,17 @@ var driversInstallScript []byte
 //go:embed assets/installVllmDeps.sh
 var installVllmDepsScript []byte
 
+//go:embed assets/buildTransferBench.sh
+var buildTransferBenchScript []byte
+
 const nvbandwidthRepo = "https://github.com/NVIDIA/nvbandwidth.git"
+
+// DefaultTransferBenchRef pins the TransferBench release that setup builds, so
+// bandwidth numbers from different nodes come from the same code.
+const DefaultTransferBenchRef = "v1.70.02"
+
+// gitRefPattern limits refs to tag/branch characters; the ref reaches a shell.
+var gitRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 
 type Provisioner struct {
     sudoPassword []byte
@@ -134,6 +145,47 @@ func (p *Provisioner) SetupLocalPhase2() error {
 	fmt.Println("\nLocal Setup Successful!")
 	fmt.Println("You can now run benchmarks using: ai-studio-cli nvbandwidth")
 	return nil
+}
+
+// SetupTransferBench builds AMD TransferBench at the given git tag or branch
+// and installs it beside the ai-studio-cli binary. The amdgpu driver and ROCm
+// must already be installed; Phase 1 provisions NVIDIA nodes only.
+func (p *Provisioner) SetupTransferBench(ref string) error {
+	defer p.Close()
+
+	if !gitRefPattern.MatchString(ref) {
+		return fmt.Errorf("invalid TransferBench ref %q: use a tag or branch name, e.g. %s", ref, DefaultTransferBenchRef)
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot determine the ai-studio-cli directory to install into: %v", err)
+	}
+	installDir := filepath.Dir(exePath)
+
+	fmt.Printf("Building TransferBench %s...\n", ref)
+	scriptPath := "/tmp/buildTransferBench.sh"
+	script := bytes.ReplaceAll(buildTransferBenchScript, []byte("\r\n"), []byte("\n"))
+	if err := os.WriteFile(scriptPath, script, 0755); err != nil {
+		return fmt.Errorf("failed to stage script: %v", err)
+	}
+
+	args := strings.Join([]string{
+		shellQuote(ref),
+		shellQuote(installDir),
+		fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+	}, " ")
+	if err := p.runLocalCommand(scriptPath, args); err != nil {
+		return fmt.Errorf("TransferBench build failed: %v", err)
+	}
+
+	fmt.Println("\nTransferBench installed.")
+	fmt.Println("You can now run benchmarks using: ai-studio-cli transferbench")
+	return nil
+}
+
+// shellQuote wraps s in single quotes for sh -c.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // SetupVLLMDeps installs the container runtime and GPU dependencies for vLLM.

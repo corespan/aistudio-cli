@@ -45,7 +45,7 @@ EXTERNAL SOFTWARE THIS TOOL INSTALLS OR RUNS
 
 Separately from what is compiled in, ai-studio-cli provisions and runs software
 on GPU nodes: NVIDIA drivers and the CUDA userspace, Docker or Podman, vLLM,
-nvbandwidth, and container images pulled at run time.
+nvbandwidth, AMD TransferBench, and container images pulled at run time.
 
 CoreSpan does not distribute those. They are downloaded by the operator, from
 their publishers, onto the operator's own machines, under those publishers'
